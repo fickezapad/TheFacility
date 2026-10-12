@@ -19,3 +19,7 @@ Saved/
 # Logs and temporary files
 *.log
 *.tmp
+
+# Visual Studio solution upgrade leftovers
+Backup/
+UpgradeLog.htm
