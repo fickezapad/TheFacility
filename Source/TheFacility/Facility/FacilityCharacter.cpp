@@ -2,20 +2,27 @@
 
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityInteractionComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 #include "TheFacility.h"
 
 AFacilityCharacter::AFacilityCharacter()
 {
 	InteractionComponent = CreateDefaultSubobject<UFacilityInteractionComponent>(TEXT("Interaction"));
+
+	// so teammates can aim at a downed player to help them up
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
 void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -23,6 +30,7 @@ void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME_CONDITION(AFacilityCharacter, HeldKeys, COND_OwnerOnly);
+	DOREPLIFETIME(AFacilityCharacter, bDowned);
 }
 
 void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -110,7 +118,10 @@ FText AFacilityCharacter::GetInteractKeyText() const
 
 void AFacilityCharacter::DoInteract()
 {
-	InteractionComponent->TryInteract();
+	if (!bDowned)
+	{
+		InteractionComponent->TryInteract();
+	}
 }
 
 void AFacilityCharacter::GiveKey(FName KeyId)
@@ -142,4 +153,74 @@ void AFacilityCharacter::Server_DebugRespawn_Implementation()
 	Destroy();
 	GameMode->RestartPlayer(OwningController);
 #endif
+}
+
+void AFacilityCharacter::SetDowned(bool bNewDowned)
+{
+	if (!HasAuthority() || bDowned == bNewDowned)
+	{
+		return;
+	}
+
+	bDowned = bNewDowned;
+	ApplyDowned();
+	UE_LOG(LogTheFacility, Log, TEXT("%s is %s"), GetPlayerState() ? *GetPlayerState()->GetPlayerName() : *GetName(), bDowned ? TEXT("down") : TEXT("back up"));
+
+	GetWorldTimerManager().ClearTimer(RecoverTimer);
+	if (bDowned)
+	{
+		GetWorldTimerManager().SetTimer(RecoverTimer, this, &AFacilityCharacter::RecoverIfAlone, FMath::Max(AloneRecoverTime, 0.01f), false);
+	}
+}
+
+void AFacilityCharacter::RecoverIfAlone()
+{
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		const AFacilityCharacter* Other = It->Get() ? Cast<AFacilityCharacter>(It->Get()->GetPawn()) : nullptr;
+		if (Other && Other != this && !Other->IsDowned())
+		{
+			// someone could help; leave it to them
+			return;
+		}
+	}
+
+	SetDowned(false);
+}
+
+void AFacilityCharacter::OnRep_Downed()
+{
+	ApplyDowned();
+}
+
+void AFacilityCharacter::ApplyDowned()
+{
+	if (bDowned)
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+		GetCharacterMovement()->DisableMovement();
+	}
+	else
+	{
+		GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	}
+}
+
+bool AFacilityCharacter::CanInteract_Implementation(APawn* InstigatorPawn) const
+{
+	const AFacilityCharacter* Helper = Cast<AFacilityCharacter>(InstigatorPawn);
+	return bDowned && Helper && Helper != this && !Helper->IsDowned();
+}
+
+FText AFacilityCharacter::GetInteractPrompt_Implementation(APawn* InstigatorPawn) const
+{
+	return CanInteract_Implementation(InstigatorPawn) ? NSLOCTEXT("Facility", "HelpUp", "Help up") : FText::GetEmpty();
+}
+
+void AFacilityCharacter::Interact_Implementation(APawn* InstigatorPawn)
+{
+	if (HasAuthority() && CanInteract_Implementation(InstigatorPawn))
+	{
+		SetDowned(false);
+	}
 }

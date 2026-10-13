@@ -27,6 +27,8 @@ AFacilityDoor::AFacilityDoor()
 	DoorMesh->SetupAttachment(Hinge);
 	DoorMesh->SetMobility(EComponentMobility::Movable);
 	DoorMesh->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
+	// navigation runs through the doorway whether the door is open or not; AI opens doors itself
+	DoorMesh->SetCanEverAffectNavigation(false);
 
 	// placeholder slab, 100cm wide and 210cm tall, swinging from its left edge
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));

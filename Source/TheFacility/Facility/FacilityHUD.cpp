@@ -4,12 +4,14 @@
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
+#include "Facility/FacilityMarked.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
+#include "EngineUtils.h"
 
 static TAutoConsoleVariable<int32> CVarFacilityShowLedger(
 	TEXT("facility.ShowLedger"),
@@ -38,6 +40,38 @@ void AFacilityHUD::DrawHUD()
 	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.6f), CenterX - 2.0f, CenterY - 2.0f, 4.0f, 4.0f);
 
 	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(GetOwningPawn());
+
+	AFacilityMarked* Marked = nullptr;
+	for (TActorIterator<AFacilityMarked> It(GetWorld()); It; ++It)
+	{
+		Marked = *It;
+		break;
+	}
+
+	// the mark can't see the creature, but feels it: a red pulse at the screen edges that grows as it gets closer
+	if (Character && Marked && Marked->IsLocalPlayerMarked())
+	{
+		const float Dread = Marked->GetDreadAt(Character->GetActorLocation());
+		if (Dread > 0.0f)
+		{
+			const float Time = GetWorld()->GetTimeSeconds();
+			const float Pulse = 0.5f + 0.5f * FMath::Sin(Time * (3.0f + 7.0f * Dread));
+			const FLinearColor Edge(0.5f, 0.0f, 0.0f, Dread * (0.25f + 0.35f * Pulse));
+			const float Thickness = 30.0f + 90.0f * Dread;
+			DrawRect(Edge, 0.0f, 0.0f, Canvas->ClipX, Thickness);
+			DrawRect(Edge, 0.0f, Canvas->ClipY - Thickness, Canvas->ClipX, Thickness);
+			DrawRect(Edge, 0.0f, Thickness, Thickness, Canvas->ClipY - 2.0f * Thickness);
+			DrawRect(Edge, Canvas->ClipX - Thickness, Thickness, Thickness, Canvas->ClipY - 2.0f * Thickness);
+		}
+	}
+
+	if (Character && Character->IsDowned())
+	{
+		const FString DownText = TEXT("You are down. A teammate can help you up.");
+		float TextWidth, TextHeight;
+		GetTextSize(DownText, TextWidth, TextHeight, GEngine->GetMediumFont());
+		DrawText(DownText, FLinearColor(1.0f, 0.3f, 0.3f), CenterX - TextWidth * 0.5f, CenterY - 60.0f, GEngine->GetMediumFont());
+	}
 
 	// interaction prompt
 	if (Character && Character->GetInteractionComponent())
@@ -86,6 +120,15 @@ void AFacilityHUD::DrawHUD()
 	{
 		DrawLine(TEXT("Ledger: no Facility game state (check the level's game mode)"), 20.0f, Y, FLinearColor::Red);
 		return;
+	}
+
+	if (Marked)
+	{
+		const APlayerState* MarkState = Marked->GetMark();
+		DrawLine(FString::Printf(TEXT("Marked: %s  mark: %s%s"),
+			*StaticEnum<EMarkedState>()->GetNameStringByValue((int64)Marked->GetMarkedState()),
+			MarkState ? *MarkState->GetPlayerName() : TEXT("none"),
+			Marked->IsLocalPlayerMarked() ? TEXT(" (you)") : TEXT("")), 20.0f, Y, FLinearColor(0.8f, 0.6f, 1.0f));
 	}
 
 	DrawLine(FString::Printf(TEXT("Ledger (%d)"), GameState->GetLedger().Num()), 20.0f, Y, FLinearColor::White);

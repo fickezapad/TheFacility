@@ -2,6 +2,7 @@
 
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityInteractable.h"
+#include "Facility/FacilityCharacter.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "Engine/World.h"
@@ -54,6 +55,13 @@ void UFacilityInteractionComponent::TryInteract()
 void UFacilityInteractionComponent::Server_Interact_Implementation(AActor* Target)
 {
 	APawn* Pawn = Cast<APawn>(GetOwner());
+
+	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(Pawn);
+	if (Character && Character->IsDowned())
+	{
+		UE_LOG(LogTheFacility, Log, TEXT("Interact rejected, player is down: %s -> %s"), *GetNameSafe(Pawn), *GetNameSafe(Target));
+		return;
+	}
 
 	if (!Pawn || !ValidateTarget(Target))
 	{

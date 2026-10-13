@@ -55,6 +55,10 @@ public:
 
 	AFacilityDoor();
 
+	bool IsOpen() const { return bOpen; }
+
+	bool IsLocked() const { return bLocked; }
+
 	// IFacilityInteractable
 	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;
 	virtual FText GetInteractPrompt_Implementation(APawn* InstigatorPawn) const override;

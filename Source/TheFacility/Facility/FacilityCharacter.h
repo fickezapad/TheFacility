@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "TheFacilityCharacter.h"
+#include "Facility/FacilityInteractable.h"
 #include "FacilityCharacter.generated.h"
 
 class UFacilityInteractionComponent;
@@ -13,10 +14,11 @@ class ULocalPlayer;
 
 /**
  *  First person character for Facility runs.
- *  Adds interaction and a server-owned set of held keys on top of the template character.
+ *  Adds interaction, a server-owned set of held keys and a downed state on top of the template character.
+ *  A downed player can't move or interact; a teammate helps them up by interacting with them.
  */
 UCLASS(abstract)
-class THEFACILITY_API AFacilityCharacter : public ATheFacilityCharacter
+class THEFACILITY_API AFacilityCharacter : public ATheFacilityCharacter, public IFacilityInteractable
 {
 	GENERATED_BODY()
 
@@ -36,6 +38,16 @@ protected:
 	/** Keys this player carries. Changed only on the server, replicated to the owner */
 	UPROPERTY(Replicated, VisibleInstanceOnly, Category="Facility")
 	TArray<FName> HeldKeys;
+
+	/** Down: can't move or interact until a teammate helps them up. Server owned */
+	UPROPERTY(ReplicatedUsing=OnRep_Downed, BlueprintReadOnly, Category="Facility")
+	bool bDowned = false;
+
+	/** With nobody standing to help, a downed player gets up by themselves after this long */
+	UPROPERTY(EditAnywhere, Category="Facility", meta=(ClampMin=0, Units="s"))
+	float AloneRecoverTime = 20.0f;
+
+	FTimerHandle RecoverTimer;
 
 	/** True if this pawn created InteractMappingContext itself, so it must also remove it */
 	bool bOwnsInteractMappingContext = false;
@@ -58,6 +70,17 @@ public:
 	/** Server only */
 	void GiveKey(FName KeyId);
 
+	UFUNCTION(BlueprintPure, Category="Facility")
+	bool IsDowned() const { return bDowned; }
+
+	/** Server only */
+	void SetDowned(bool bNewDowned);
+
+	// IFacilityInteractable: a downed player can be helped up by a standing one
+	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;
+	virtual FText GetInteractPrompt_Implementation(APawn* InstigatorPawn) const override;
+	virtual void Interact_Implementation(APawn* InstigatorPawn) override;
+
 	/** Display name of the keyboard key bound to Interact for the local player, e.g. "E". Empty if unknown */
 	FText GetInteractKeyText() const;
 
@@ -79,4 +102,13 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void Server_DebugRespawn();
+
+	UFUNCTION()
+	void OnRep_Downed();
+
+	/** Applies the downed state to movement on this machine */
+	void ApplyDowned();
+
+	/** Server: gets up alone if nobody is standing to help */
+	void RecoverIfAlone();
 };
