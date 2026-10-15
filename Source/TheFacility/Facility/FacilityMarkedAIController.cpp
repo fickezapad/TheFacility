@@ -4,8 +4,10 @@
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityMovementComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerState.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "NavigationSystem.h"
 #include "TimerManager.h"
@@ -55,7 +57,7 @@ void AFacilityMarkedAIController::Think()
 	StateTime += ThinkInterval;
 	TimeToRepath -= ThinkInterval;
 
-	if (!Creature->IsPresent())
+	if (!Creature->IsPresent() || State == EMarkedState::Stunned)
 	{
 		if (GetMoveStatus() != EPathFollowingStatus::Idle)
 		{
@@ -65,7 +67,7 @@ void AFacilityMarkedAIController::Think()
 		return;
 	}
 
-	if (!Creature->GetMark())
+	if (!IsValid(Creature->GetMark()))
 	{
 		UE_LOG(LogTheFacility, Log, TEXT("The Marked: its mark left the game, going dormant"));
 		StopMovement();
@@ -133,7 +135,9 @@ void AFacilityMarkedAIController::Think()
 			Enter(EMarkedState::Searching);
 			break;
 		}
-		SetSpeed(Target->GetCharacterMovement()->MaxWalkSpeed * ChaseSpeedRatio);
+		// paced against the mark's walk, so a mark who sprints gains ground until they run out of breath
+		const UFacilityMovementComponent* TargetMovement = Cast<UFacilityMovementComponent>(Target->GetCharacterMovement());
+		SetSpeed((TargetMovement ? TargetMovement->GetWalkSpeed() : Target->GetCharacterMovement()->MaxWalkSpeed) * ChaseSpeedRatio);
 		if (TimeToRepath <= 0.0f || bIdle)
 		{
 			// toward where it last knew the mark was, which is where the mark is while it can still see them

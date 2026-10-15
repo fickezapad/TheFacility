@@ -12,6 +12,7 @@ struct FFacilitySignature;
 
 /**
  *  The Facility's first response: when anything is signed in this zone, its lights flicker and die.
+ *  Lights on the motel's main circuit also stay dark until someone restores the power.
  *  Not replicated itself. Every machine derives the power state from the replicated ledger,
  *  so clients and late joiners always agree with the server.
  */
@@ -38,11 +39,19 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Zone", meta=(ClampMin=0, Units="s"))
 	float FlickerDuration = 1.5f;
 
+	/** Dark until the motel's power is restored at the fuse box */
+	UPROPERTY(EditAnywhere, Category="Zone")
+	bool bNeedsMainPower = false;
+
 	/** Signatures older than this when they reach a machine (e.g. on late join) skip the flicker and chime */
 	UPROPERTY(EditAnywhere, Category="Zone", meta=(ClampMin=0, Units="s"))
 	float FreshSignatureWindow = 3.0f;
 
+	/** False once something was signed in this zone. The Facility's cut outlasts the fuse box */
 	bool bPowered = true;
+
+	/** Main power, as this machine knows it */
+	bool bMainPower = true;
 
 	float FlickerTimeLeft = 0.0f;
 
@@ -73,6 +82,9 @@ protected:
 
 	UFUNCTION()
 	void HandleSignatureRecorded(const FFacilitySignature& Signature);
+
+	UFUNCTION()
+	void HandlePowerRestored();
 
 	void FlickerStep();
 

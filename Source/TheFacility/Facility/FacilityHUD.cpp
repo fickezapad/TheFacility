@@ -2,9 +2,11 @@
 
 #include "Facility/FacilityHUD.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityExit.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityMovementComponent.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -24,6 +26,109 @@ void AFacilityHUD::DrawLine(const FString& Text, float X, float& Y, const FLinea
 	Y += 16.0f;
 }
 
+void AFacilityHUD::DrawCentered(const FString& Text, float CenterX, float Y, const FLinearColor& Color, UFont* Font, float Scale)
+{
+	float TextWidth, TextHeight;
+	GetTextSize(Text, TextWidth, TextHeight, Font, Scale);
+	// a dark copy underneath keeps it readable over a surface the flashlight has washed out
+	DrawText(Text, FLinearColor(0.0f, 0.0f, 0.0f, Color.A * 0.8f), CenterX - TextWidth * 0.5f + 1.5f, Y + 1.5f, Font, Scale);
+	DrawText(Text, Color, CenterX - TextWidth * 0.5f, Y, Font, Scale);
+}
+
+void AFacilityHUD::DrawObjective(const AFacilityGameState* GameState, const AFacilityCharacter* Character)
+{
+	// only maps with a way out have a night to survive
+	TActorIterator<AFacilityExit> ExitIt(GetWorld());
+	if (!ExitIt)
+	{
+		return;
+	}
+
+	FString Objective;
+	if (GameState->IsPowerRestored())
+	{
+		Objective = TEXT("The power is back and the gate is open. Get out. Everyone still standing has to be through the gate.");
+	}
+	else if (Character && Character->HasKey(TEXT("Fuse")))
+	{
+		Objective = TEXT("Fit the fuse in the fuse box in the lobby.");
+	}
+	else
+	{
+		Objective = TEXT("Restore the power. The fuse box in the lobby is missing a fuse.");
+	}
+
+	DrawCentered(Objective, Canvas->ClipX * 0.5f, 18.0f, FLinearColor(0.75f, 0.75f, 0.7f, 0.8f), GEngine->GetSmallFont());
+}
+
+void AFacilityHUD::DrawRunOver(const AFacilityGameState* GameState)
+{
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.8f), 0.0f, 0.0f, Canvas->ClipX, Canvas->ClipY);
+
+	const float CenterX = Canvas->ClipX * 0.5f;
+	float Y = Canvas->ClipY * 0.22f;
+
+	FString Title;
+	FLinearColor TitleColor = FLinearColor(0.9f, 0.85f, 0.7f);
+	if (GameState->GetRunState() == EFacilityRunState::Retained)
+	{
+		Title = TEXT("THE FACILITY KEPT YOU");
+		TitleColor = FLinearColor(0.9f, 0.2f, 0.2f);
+	}
+	else if (GameState->GetLeftBehindNames().Num() > 0)
+	{
+		Title = FString::Printf(TEXT("YOU GOT OUT. %d LEFT BEHIND"), GameState->GetLeftBehindNames().Num());
+	}
+	else
+	{
+		Title = TEXT("YOU GOT OUT");
+	}
+
+	DrawCentered(Title, CenterX, Y, TitleColor, GEngine->GetLargeFont(), 1.5f);
+	Y += 70.0f;
+
+	const float RunTime = GameState->GetRunTime();
+	DrawCentered(FString::Printf(TEXT("%d:%02d    night %d"), FMath::FloorToInt(RunTime / 60.0f), FMath::FloorToInt(RunTime) % 60, GameState->GetRunSeed()),
+		CenterX, Y, FLinearColor(0.6f, 0.6f, 0.6f), GEngine->GetMediumFont());
+	Y += 40.0f;
+
+	if (GameState->GetEscapedNames().Num() > 0)
+	{
+		DrawCentered(TEXT("Out: ") + FString::Join(GameState->GetEscapedNames(), TEXT(", ")), CenterX, Y, FLinearColor::White, GEngine->GetMediumFont());
+		Y += 26.0f;
+	}
+	if (GameState->GetLeftBehindNames().Num() > 0)
+	{
+		DrawCentered(TEXT("Kept: ") + FString::Join(GameState->GetLeftBehindNames(), TEXT(", ")), CenterX, Y, FLinearColor(1.0f, 0.45f, 0.45f), GEngine->GetMediumFont());
+		Y += 26.0f;
+	}
+	Y += 20.0f;
+
+	// the debrief is the Facility's own paperwork about you
+	DrawCentered(TEXT("THE LEDGER"), CenterX, Y, FLinearColor(0.8f, 0.6f, 0.6f), GEngine->GetMediumFont());
+	Y += 26.0f;
+	if (GameState->GetLedger().IsEmpty())
+	{
+		DrawCentered(TEXT("Nothing was signed."), CenterX, Y, FLinearColor(0.7f, 0.7f, 0.7f), GEngine->GetSmallFont());
+		Y += 18.0f;
+	}
+	for (const FFacilitySignature& Entry : GameState->GetLedger())
+	{
+		const int32 Seconds = FMath::Max(FMath::FloorToInt(static_cast<float>(Entry.ServerTime - GameState->GetRunStartTime())), 0);
+		DrawCentered(FString::Printf(TEXT("%d:%02d   %s signed for the %s"), Seconds / 60, Seconds % 60,
+			*Entry.SignerName, *Entry.SignatureId.ToString()), CenterX, Y, FLinearColor(0.85f, 0.75f, 0.75f), GEngine->GetSmallFont());
+		Y += 18.0f;
+	}
+	if (!GameState->GetPowerRestoredBy().IsEmpty())
+	{
+		DrawCentered(FString::Printf(TEXT("Power restored by %s"), *GameState->GetPowerRestoredBy()), CenterX, Y, FLinearColor(0.7f, 0.7f, 0.7f), GEngine->GetSmallFont());
+		Y += 18.0f;
+	}
+
+	DrawCentered(GetNetMode() == NM_Client ? TEXT("Waiting for the host to start another night") : TEXT("Press R for another night"),
+		CenterX, Canvas->ClipY * 0.85f, FLinearColor(0.6f, 0.6f, 0.6f), GEngine->GetMediumFont());
+}
+
 void AFacilityHUD::DrawHUD()
 {
 	Super::DrawHUD();
@@ -40,6 +145,23 @@ void AFacilityHUD::DrawHUD()
 	DrawRect(FLinearColor(1.0f, 1.0f, 1.0f, 0.6f), CenterX - 2.0f, CenterY - 2.0f, 4.0f, 4.0f);
 
 	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(GetOwningPawn());
+	const AFacilityGameState* RunGameState = GetWorld()->GetGameState<AFacilityGameState>();
+
+	if (RunGameState && !RunGameState->IsRunInProgress())
+	{
+		DrawRunOver(RunGameState);
+		return;
+	}
+
+	// the flash camera going off in your own hands
+	if (Character)
+	{
+		const float SinceFlash = GetWorld()->GetTimeSeconds() - Character->GetLastFlashTime();
+		if (SinceFlash < 0.4f)
+		{
+			DrawRect(FLinearColor(1.0f, 1.0f, 0.95f, 0.85f * (1.0f - SinceFlash / 0.4f)), 0.0f, 0.0f, Canvas->ClipX, Canvas->ClipY);
+		}
+	}
 
 	AFacilityMarked* Marked = nullptr;
 	for (TActorIterator<AFacilityMarked> It(GetWorld()); It; ++It)
@@ -67,14 +189,57 @@ void AFacilityHUD::DrawHUD()
 
 	if (Character && Character->IsDowned())
 	{
-		const FString DownText = TEXT("You are down. A teammate can help you up.");
-		float TextWidth, TextHeight;
-		GetTextSize(DownText, TextWidth, TextHeight, GEngine->GetMediumFont());
-		DrawText(DownText, FLinearColor(1.0f, 0.3f, 0.3f), CenterX - TextWidth * 0.5f, CenterY - 60.0f, GEngine->GetMediumFont());
+		bool bRecoversAlone = false;
+		const int32 SecondsLeft = FMath::CeilToInt(Character->GetDownedTimeLeft(bRecoversAlone));
+		const FString DownText = bRecoversAlone
+			? FString::Printf(TEXT("You are down. Nobody can reach you. The Facility lets you go, once. %d"), SecondsLeft)
+			: FString::Printf(TEXT("You are down. A teammate has %d s to help you up."), SecondsLeft);
+		DrawCentered(DownText, CenterX, CenterY - 60.0f, FLinearColor(1.0f, 0.3f, 0.3f), GEngine->GetMediumFont());
+	}
+
+	if (Character && Character->IsRetained())
+	{
+		const APawn* Watched = Cast<APawn>(GetOwningPlayerController()->GetViewTarget());
+		const FString WatchedName = (Watched && Watched != Character && Watched->GetPlayerState()) ? Watched->GetPlayerState()->GetPlayerName() : TEXT("nobody");
+		DrawCentered(TEXT("The Facility has kept you."), CenterX, Canvas->ClipY * 0.75f, FLinearColor(1.0f, 0.3f, 0.3f), GEngine->GetMediumFont());
+		DrawCentered(FString::Printf(TEXT("Watching %s.  [LMB] next"), *WatchedName), CenterX, Canvas->ClipY * 0.75f + 26.0f, FLinearColor(0.7f, 0.7f, 0.7f), GEngine->GetSmallFont());
+	}
+
+	if (RunGameState && Character && !Character->IsRetained())
+	{
+		DrawObjective(RunGameState, Character);
+	}
+
+	// stamina: only while it isn't full
+	if (const UFacilityMovementComponent* Movement = Character ? Character->GetFacilityMovement() : nullptr)
+	{
+		const float Stamina = Movement->GetStaminaFraction();
+		if (Stamina < 0.999f && Character->IsStanding())
+		{
+			const float Width = 220.0f;
+			const FLinearColor BarColor = Movement->IsExhausted() ? FLinearColor(0.7f, 0.2f, 0.2f, 0.7f) : FLinearColor(0.8f, 0.8f, 0.75f, 0.5f);
+			DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.4f), CenterX - Width * 0.5f, Canvas->ClipY - 60.0f, Width, 5.0f);
+			DrawRect(BarColor, CenterX - Width * 0.5f, Canvas->ClipY - 60.0f, Width * Stamina, 5.0f);
+		}
+	}
+
+	// what this player carries
+	if (Character && Character->IsStanding() && Character->GetHeldKeys().Num() > 0)
+	{
+		FString Items;
+		for (const FName& Key : Character->GetHeldKeys())
+		{
+			Items += (Items.IsEmpty() ? TEXT("") : TEXT(",  ")) + AFacilityCharacter::GetItemName(Key).ToString();
+			if (Key == AFacilityCharacter::FlashCameraId)
+			{
+				Items += TEXT(" [LMB]");
+			}
+		}
+		DrawText(TEXT("Carrying: ") + Items, FLinearColor(0.85f, 0.85f, 0.8f, 0.85f), 20.0f, Canvas->ClipY - 40.0f, GEngine->GetSmallFont());
 	}
 
 	// interaction prompt
-	if (Character && Character->GetInteractionComponent())
+	if (Character && Character->IsStanding() && Character->GetInteractionComponent())
 	{
 		const FText Prompt = Character->GetInteractionComponent()->GetFocusedPrompt();
 		if (!Prompt.IsEmpty())
@@ -83,9 +248,7 @@ void AFacilityHUD::DrawHUD()
 			const FString PromptText = KeyText.IsEmpty()
 				? Prompt.ToString()
 				: FString::Printf(TEXT("[%s] %s"), *KeyText.ToString(), *Prompt.ToString());
-			float TextWidth, TextHeight;
-			GetTextSize(PromptText, TextWidth, TextHeight, GEngine->GetMediumFont());
-			DrawText(PromptText, FLinearColor::White, CenterX - TextWidth * 0.5f, CenterY + 40.0f, GEngine->GetMediumFont());
+			DrawCentered(PromptText, CenterX, CenterY + 40.0f, FLinearColor::White, GEngine->GetMediumFont());
 		}
 	}
 
@@ -95,7 +258,8 @@ void AFacilityHUD::DrawHUD()
 	}
 
 	// debug panel: which machine this is, what it holds, and the ledger as this machine sees it
-	float Y = 20.0f;
+	// below the objective line
+	float Y = 40.0f;
 	const TCHAR* NetLabel = TEXT("Standalone");
 	switch (GetNetMode())
 	{
@@ -122,12 +286,16 @@ void AFacilityHUD::DrawHUD()
 		return;
 	}
 
+	DrawLine(FString::Printf(TEXT("Run: %s  seed %d  %.0f s  power %s"),
+		*StaticEnum<EFacilityRunState>()->GetNameStringByValue((int64)GameState->GetRunState()), GameState->GetRunSeed(), GameState->GetRunTime(),
+		GameState->IsPowerRestored() ? TEXT("on") : TEXT("off")), 20.0f, Y, FLinearColor(0.6f, 0.9f, 0.6f));
+
 	if (Marked)
 	{
 		const APlayerState* MarkState = Marked->GetMark();
 		DrawLine(FString::Printf(TEXT("Marked: %s  mark: %s%s"),
 			*StaticEnum<EMarkedState>()->GetNameStringByValue((int64)Marked->GetMarkedState()),
-			MarkState ? *MarkState->GetPlayerName() : TEXT("none"),
+			IsValid(MarkState) ? *MarkState->GetPlayerName() : TEXT("none"),
 			Marked->IsLocalPlayerMarked() ? TEXT(" (you)") : TEXT("")), 20.0f, Y, FLinearColor(0.8f, 0.6f, 1.0f));
 	}
 

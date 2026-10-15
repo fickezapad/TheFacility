@@ -10,6 +10,78 @@ void AFacilityGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AFacilityGameState, Ledger);
+	DOREPLIFETIME(AFacilityGameState, bPowerRestored);
+	DOREPLIFETIME(AFacilityGameState, PowerRestoredBy);
+	DOREPLIFETIME(AFacilityGameState, RunState);
+	DOREPLIFETIME(AFacilityGameState, RunSeed);
+	DOREPLIFETIME(AFacilityGameState, RunStartTime);
+	DOREPLIFETIME(AFacilityGameState, RunEndTime);
+	DOREPLIFETIME(AFacilityGameState, EscapedNames);
+	DOREPLIFETIME(AFacilityGameState, LeftBehindNames);
+}
+
+void AFacilityGameState::StartRun(int32 Seed)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	RunSeed = Seed;
+	RunStartTime = GetServerWorldTimeSeconds();
+	RunState = EFacilityRunState::InProgress;
+}
+
+float AFacilityGameState::GetRunTime() const
+{
+	const double End = RunState == EFacilityRunState::InProgress ? GetServerWorldTimeSeconds() : RunEndTime;
+	return static_cast<float>(FMath::Max(End - RunStartTime, 0.0));
+}
+
+void AFacilityGameState::RestorePower(APlayerState* By)
+{
+	if (!HasAuthority() || bPowerRestored)
+	{
+		return;
+	}
+
+	bPowerRestored = true;
+	PowerRestoredBy = MakeSignerName(By);
+	UE_LOG(LogTheFacility, Log, TEXT("Run: power restored by %s"), *PowerRestoredBy);
+
+	// OnRep doesn't run on the server
+	BroadcastPower();
+}
+
+void AFacilityGameState::OnRep_PowerRestored()
+{
+	BroadcastPower();
+}
+
+void AFacilityGameState::BroadcastPower()
+{
+	if (bPowerRestored && !bPowerBroadcast)
+	{
+		bPowerBroadcast = true;
+		OnPowerRestored.Broadcast();
+	}
+}
+
+void AFacilityGameState::EndRun(EFacilityRunState Outcome, const TArray<FString>& Escaped, const TArray<FString>& LeftBehind)
+{
+	if (!HasAuthority() || RunState != EFacilityRunState::InProgress || Outcome == EFacilityRunState::InProgress)
+	{
+		return;
+	}
+
+	RunState = Outcome;
+	RunEndTime = GetServerWorldTimeSeconds();
+	EscapedNames = Escaped;
+	LeftBehindNames = LeftBehind;
+
+	UE_LOG(LogTheFacility, Log, TEXT("Run over: %s after %.1f s. Escaped: [%s]. Left behind: [%s]. Seed %d, %d signatures"),
+		*StaticEnum<EFacilityRunState>()->GetNameStringByValue((int64)Outcome), GetRunTime(),
+		*FString::Join(EscapedNames, TEXT(", ")), *FString::Join(LeftBehindNames, TEXT(", ")), RunSeed, Ledger.Num());
 }
 
 void AFacilityGameState::RecordSignature(FName SignatureId, FName ZoneId, APlayerState* Signer)

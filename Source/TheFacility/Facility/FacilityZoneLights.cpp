@@ -36,6 +36,13 @@ void AFacilityZoneLights::BeginPlay()
 		}
 	}
 
+	// on the main circuit: dark from the start, until the game state says the power is back
+	bMainPower = !bNeedsMainPower;
+	if (!bMainPower)
+	{
+		SetLightsVisible(false);
+	}
+
 	TryBindToGameState();
 }
 
@@ -75,6 +82,12 @@ void AFacilityZoneLights::TryBindToGameState()
 	}
 
 	GameState->OnSignatureRecorded.AddUniqueDynamic(this, &AFacilityZoneLights::HandleSignatureRecorded);
+	GameState->OnPowerRestored.AddUniqueDynamic(this, &AFacilityZoneLights::HandlePowerRestored);
+
+	if (GameState->IsPowerRestored())
+	{
+		HandlePowerRestored();
+	}
 
 	// catch up on anything signed before we were listening
 	if (GameState->HasSignatureInZone(ZoneId))
@@ -96,6 +109,22 @@ void AFacilityZoneLights::HandleSignatureRecorded(const FFacilitySignature& Sign
 	CutPower(bFresh);
 }
 
+void AFacilityZoneLights::HandlePowerRestored()
+{
+	if (bMainPower)
+	{
+		return;
+	}
+
+	bMainPower = true;
+
+	// a signed zone stays dark: the fuse box can't undo what the Facility took
+	if (bPowered)
+	{
+		SetLightsVisible(true);
+	}
+}
+
 void AFacilityZoneLights::CutPower(bool bAnimate)
 {
 	if (!bPowered)
@@ -105,7 +134,8 @@ void AFacilityZoneLights::CutPower(bool bAnimate)
 
 	bPowered = false;
 
-	if (!bAnimate || FlickerDuration <= 0.0f)
+	// already dark on a dead circuit: nothing to see go out
+	if (!bAnimate || FlickerDuration <= 0.0f || !bMainPower)
 	{
 		SetLightsVisible(false);
 		return;

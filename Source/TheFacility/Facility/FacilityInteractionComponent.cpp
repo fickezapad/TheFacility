@@ -6,6 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "TheFacility.h"
 
 UFacilityInteractionComponent::UFacilityInteractionComponent()
@@ -57,9 +58,9 @@ void UFacilityInteractionComponent::Server_Interact_Implementation(AActor* Targe
 	APawn* Pawn = Cast<APawn>(GetOwner());
 
 	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(Pawn);
-	if (Character && Character->IsDowned())
+	if (Character && !Character->IsStanding())
 	{
-		UE_LOG(LogTheFacility, Log, TEXT("Interact rejected, player is down: %s -> %s"), *GetNameSafe(Pawn), *GetNameSafe(Target));
+		UE_LOG(LogTheFacility, Log, TEXT("Interact rejected, player is down or retained: %s -> %s"), *GetNameSafe(Pawn), *GetNameSafe(Target));
 		return;
 	}
 
@@ -136,6 +137,14 @@ bool UFacilityInteractionComponent::ValidateTarget(AActor* Target) const
 bool UFacilityInteractionComponent::HasLineOfSight(const AActor* Target, const FVector& ViewLocation, const FVector& Point) const
 {
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(FacilityInteractLOS), false, GetOwner());
+	// a teammate standing in the way doesn't stop you from reaching past them
+	for (TActorIterator<AFacilityCharacter> It(GetWorld()); It; ++It)
+	{
+		if (*It != Target)
+		{
+			Params.AddIgnoredActor(*It);
+		}
+	}
 	FHitResult Hit;
 
 	if (GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, Point, TraceChannel, Params))
@@ -165,13 +174,28 @@ AActor* UFacilityInteractionComponent::TraceForInteractable() const
 	FHitResult Hit;
 	const FVector End = ViewLocation + ViewRotation.Vector() * InteractRange;
 
-	if (GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, TraceChannel, Params))
+	// players block the trace so a downed one can be helped up, but a teammate who can't be used
+	// right now is looked through, so they don't hide the object behind them
+	for (int32 Attempt = 0; Attempt < 4; ++Attempt)
 	{
-		AActor* HitActor = Hit.GetActor();
-		if (HitActor && HitActor->Implements<UFacilityInteractable>())
+		if (!GetWorld()->LineTraceSingleByChannel(Hit, ViewLocation, End, TraceChannel, Params))
 		{
-			return HitActor;
+			return nullptr;
 		}
+
+		AActor* HitActor = Hit.GetActor();
+		if (!HitActor || !HitActor->Implements<UFacilityInteractable>())
+		{
+			return nullptr;
+		}
+
+		if (Cast<AFacilityCharacter>(HitActor) && !IFacilityInteractable::Execute_CanInteract(HitActor, const_cast<APawn*>(Pawn)))
+		{
+			Params.AddIgnoredActor(HitActor);
+			continue;
+		}
+
+		return HitActor;
 	}
 
 	return nullptr;

@@ -10,7 +10,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "TheFacility.h"
 
-ATheFacilityCharacter::ATheFacilityCharacter()
+ATheFacilityCharacter::ATheFacilityCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(55.f, 96.0f);

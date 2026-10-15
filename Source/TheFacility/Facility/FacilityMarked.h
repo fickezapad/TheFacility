@@ -24,7 +24,9 @@ enum class EMarkedState : uint8
 	/** Has its mark in sight and goes straight for it */
 	Chasing,
 	/** Lost its mark and checks where it was last seen */
-	Searching
+	Searching,
+	/** Caught in a camera flash: present but frozen for a few seconds */
+	Stunned
 };
 
 /**
@@ -32,6 +34,9 @@ enum class EMarkedState : uint8
  *  It wakes when its Offering is signed and hunts only the player who signed it, its mark.
  *  The mark can't see it; everyone else can. The mark only gets indirect evidence: footsteps,
  *  lights failing near it, doors opening, its body blocking the way, and a dread pulse on the HUD.
+ *
+ *  If its mark is retained by the Facility, the bond passes to whoever next picks up the Offering they dropped.
+ *  A camera flash stuns it briefly; signing the camera itself makes it return faster after a catch.
  *
  *  Everything that matters is decided on the server (activation, mark, state, AI, catching).
  *  Visibility is decided on each machine from the replicated mark, by hiding components locally,
@@ -58,6 +63,13 @@ protected:
 	/** After catching its mark it waits until they are back up, then stays away this long before manifesting again */
 	UPROPERTY(EditAnywhere, Category="Marked", meta=(ClampMin=0, Units="s"))
 	float WithdrawTime = 15.0f;
+
+	/** Each of these signatures halves WithdrawTime: the Facility answers by sending it back sooner */
+	UPROPERTY(EditAnywhere, Category="Marked")
+	TArray<FName> HastenedBySignatureIds = { FName(TEXT("FlashCamera")) };
+
+	/** WithdrawTime is scaled by this, after hastening signatures */
+	float WithdrawScale = 1.0f;
 
 	/** Lights within this distance flicker on every machine while the creature is present */
 	UPROPERTY(EditAnywhere, Category="Marked|Evidence", meta=(ClampMin=0, Units="cm"))
@@ -86,6 +98,11 @@ protected:
 
 	FTimerHandle StateTimer;
 
+	FTimerHandle StunTimer;
+
+	/** The run is over: it stays dormant for good */
+	bool bShutDown = false;
+
 	/** Local cosmetic state */
 	bool bLocallyVisible = true;
 	float DistanceSinceStep = 0.0f;
@@ -110,7 +127,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Marked")
 	APlayerState* GetMark() const { return Mark; }
 
-	/** True while it is in the world for gameplay: visible to others, colliding, moving */
+	/** True while it is in the world for gameplay: visible to others, colliding (moving unless stunned) */
 	UFUNCTION(BlueprintPure, Category="Marked")
 	bool IsPresent() const { return State != EMarkedState::Dormant && State != EMarkedState::Manifesting; }
 
@@ -128,6 +145,12 @@ public:
 
 	/** Server only. The AI caught the mark: down them and withdraw for a while */
 	void CatchMark();
+
+	/** Server only. Freezes it where it stands, then it searches for its mark again */
+	void Stun(float Duration);
+
+	/** Server only. The run is over: withdraw and never come back */
+	void ShutDown();
 
 protected:
 
@@ -150,6 +173,12 @@ protected:
 
 	/** Server: called when the manifest delay is over */
 	void Appear();
+
+	/** Server: the stun wore off */
+	void EndStun();
+
+	/** Server: the mark is gone (left the game). Returns false if it's still a valid player */
+	bool HasValidMark() const;
 
 	/** Server: after a catch, waits for the mark to get back up, then for WithdrawTime */
 	void TryReturn();

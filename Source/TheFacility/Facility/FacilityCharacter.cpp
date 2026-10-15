@@ -1,13 +1,21 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityGameMode.h"
+#include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
+#include "Facility/FacilityMarked.h"
+#include "Facility/FacilityMovementComponent.h"
+#include "Facility/FacilityPickup.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
+#include "HAL/IConsoleManager.h"
 #include "Engine/World.h"
-#include "GameFramework/CharacterMovementComponent.h"
+#include "EngineUtils.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -17,12 +25,50 @@
 #include "TimerManager.h"
 #include "TheFacility.h"
 
-AFacilityCharacter::AFacilityCharacter()
+const FName AFacilityCharacter::FlashCameraId(TEXT("FlashCamera"));
+
+#if !UE_BUILD_SHIPPING
+/** QA: BugItGo needs cheats, which clients don't have. This moves the local player's own character on any machine */
+static FAutoConsoleCommandWithWorldAndArgs FacilityGotoCommand(
+	TEXT("facility.Goto"),
+	TEXT("QA: moves your own Facility character. facility.Goto X Y Z [Yaw] [Pitch]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		const ULocalPlayer* LocalPlayer = World && Args.Num() >= 3 ? World->GetFirstLocalPlayerFromController() : nullptr;
+		APlayerController* PlayerController = LocalPlayer ? LocalPlayer->PlayerController.Get() : nullptr;
+		AFacilityCharacter* Character = PlayerController ? Cast<AFacilityCharacter>(PlayerController->GetPawn()) : nullptr;
+		if (!Character)
+		{
+			UE_LOG(LogTheFacility, Warning, TEXT("facility.Goto X Y Z [Yaw] [Pitch]: needs a location and a Facility character to move"));
+			return;
+		}
+
+		const FVector Location(FCString::Atof(*Args[0]), FCString::Atof(*Args[1]), FCString::Atof(*Args[2]));
+		const FRotator View(Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.0f, Args.Num() > 3 ? FCString::Atof(*Args[3]) : 0.0f, 0.0f);
+		// the view is the client's to set; the server moves the body
+		PlayerController->SetControlRotation(View);
+		Character->Server_DebugGoto(Location, View.Yaw);
+	}));
+#endif
+
+AFacilityCharacter::AFacilityCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UFacilityMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	InteractionComponent = CreateDefaultSubobject<UFacilityInteractionComponent>(TEXT("Interaction"));
 
 	// so teammates can aim at a downed player to help them up
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
+	// a narrow, short-range beam: enough to search a room, not enough to make it feel safe
+	Flashlight = CreateDefaultSubobject<USpotLightComponent>(TEXT("Flashlight"));
+	Flashlight->SetupAttachment(GetCapsuleComponent());
+	Flashlight->SetRelativeLocation(FVector(20.0f, 12.0f, 50.0f));
+	Flashlight->SetMobility(EComponentMobility::Movable);
+	Flashlight->IntensityUnits = ELightUnits::Candelas;
+	Flashlight->Intensity = 35.0f;
+	Flashlight->AttenuationRadius = 1600.0f;
+	Flashlight->InnerConeAngle = 12.0f;
+	Flashlight->OuterConeAngle = 28.0f;
 }
 
 void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -31,6 +77,16 @@ void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 	DOREPLIFETIME_CONDITION(AFacilityCharacter, HeldKeys, COND_OwnerOnly);
 	DOREPLIFETIME(AFacilityCharacter, bDowned);
+	DOREPLIFETIME(AFacilityCharacter, bRetained);
+	DOREPLIFETIME(AFacilityCharacter, DownedDeadline);
+	DOREPLIFETIME(AFacilityCharacter, bDownedRecoversAlone);
+	// the owner switches its own light straight away and must not be overwritten by a late echo
+	DOREPLIFETIME_CONDITION(AFacilityCharacter, bFlashlightOn, COND_SkipOwner);
+}
+
+UFacilityMovementComponent* AFacilityCharacter::GetFacilityMovement() const
+{
+	return Cast<UFacilityMovementComponent>(GetCharacterMovement());
 }
 
 void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -51,14 +107,16 @@ void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 		bOwnsInteractMappingContext = true;
 	}
 
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = nullptr;
 	if (const APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
-		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
+		Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer());
+		if (Subsystem)
 		{
+			InteractMappingOwner = PC->GetLocalPlayer();
 			if (!Subsystem->HasMappingContext(InteractMappingContext))
 			{
 				Subsystem->AddMappingContext(InteractMappingContext, 1);
-				InteractMappingOwner = PC->GetLocalPlayer();
 				UE_LOG(LogTheFacility, Log, TEXT("Interact mapping added for %s (%s)"), *GetName(), *GetNameSafe(InteractMappingContext));
 			}
 			else
@@ -68,26 +126,83 @@ void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 		}
 	}
 
-	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent);
+	if (EnhancedInputComponent)
 	{
 		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoInteract);
+	}
+
+	SetupRunInput(EnhancedInputComponent, Subsystem);
+}
+
+void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputComponent, UEnhancedInputLocalPlayerSubsystem* Subsystem)
+{
+	SprintAction = NewObject<UInputAction>(this, TEXT("IA_Sprint_Default"));
+	FlashlightAction = NewObject<UInputAction>(this, TEXT("IA_Flashlight_Default"));
+	UseItemAction = NewObject<UInputAction>(this, TEXT("IA_UseItem_Default"));
+	RestartAction = NewObject<UInputAction>(this, TEXT("IA_Restart_Default"));
+
+	RunMappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Run_Default"));
+	RunMappingContext->MapKey(SprintAction, EKeys::LeftShift);
+	RunMappingContext->MapKey(SprintAction, EKeys::Gamepad_LeftThumbstick);
+	RunMappingContext->MapKey(FlashlightAction, EKeys::F);
+	RunMappingContext->MapKey(FlashlightAction, EKeys::Gamepad_DPad_Up);
+	RunMappingContext->MapKey(UseItemAction, EKeys::LeftMouseButton);
+	RunMappingContext->MapKey(UseItemAction, EKeys::Gamepad_RightTrigger);
+	RunMappingContext->MapKey(RestartAction, EKeys::R);
+
+	if (Subsystem)
+	{
+		Subsystem->AddMappingContext(RunMappingContext, 1);
+	}
+
+	if (EnhancedInputComponent)
+	{
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoSprintStart);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoSprintEnd);
+		EnhancedInputComponent->BindAction(FlashlightAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoToggleFlashlight);
+		EnhancedInputComponent->BindAction(UseItemAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoUseItem);
+		EnhancedInputComponent->BindAction(RestartAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoRestart);
 	}
 }
 
 void AFacilityCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// a pawn-made mapping dies with this pawn, so take it off the player or respawns would stack them.
+	GetWorldTimerManager().ClearTimer(DownedTimer);
+
+	// pawn-made mappings die with this pawn, so take them off the player or respawns would stack them.
 	// A shared asset mapping is left alone; the next pawn finds it already present.
-	if (bOwnsInteractMappingContext && InteractMappingOwner.IsValid())
+	if (InteractMappingOwner.IsValid())
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = InteractMappingOwner->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 		{
-			Subsystem->RemoveMappingContext(InteractMappingContext);
-			UE_LOG(LogTheFacility, Log, TEXT("Interact mapping removed for %s"), *GetName());
+			if (bOwnsInteractMappingContext)
+			{
+				Subsystem->RemoveMappingContext(InteractMappingContext);
+				UE_LOG(LogTheFacility, Log, TEXT("Interact mapping removed for %s"), *GetName());
+			}
+			if (RunMappingContext)
+			{
+				Subsystem->RemoveMappingContext(RunMappingContext);
+			}
 		}
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void AFacilityCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (GetNetMode() == NM_DedicatedServer || !Flashlight->IsVisible())
+	{
+		return;
+	}
+
+	// point the beam where this player looks. On other machines the aim comes from the replicated view pitch
+	const FRotator Aim = GetBaseAimRotation();
+	Flashlight->SetWorldLocationAndRotation(GetPawnViewLocation() + Aim.RotateVector(FVector(15.0f, 12.0f, -12.0f)), Aim);
 }
 
 FText AFacilityCharacter::GetInteractKeyText() const
@@ -118,18 +233,210 @@ FText AFacilityCharacter::GetInteractKeyText() const
 
 void AFacilityCharacter::DoInteract()
 {
-	if (!bDowned)
+	if (IsStanding())
 	{
 		InteractionComponent->TryInteract();
 	}
 }
 
-void AFacilityCharacter::GiveKey(FName KeyId)
+void AFacilityCharacter::DoSprintStart()
 {
-	if (HasAuthority() && !KeyId.IsNone())
+	if (UFacilityMovementComponent* Movement = GetFacilityMovement())
 	{
-		HeldKeys.AddUnique(KeyId);
+		Movement->SetWantsToSprint(true);
 	}
+}
+
+void AFacilityCharacter::DoSprintEnd()
+{
+	if (UFacilityMovementComponent* Movement = GetFacilityMovement())
+	{
+		Movement->SetWantsToSprint(false);
+	}
+}
+
+void AFacilityCharacter::DoToggleFlashlight()
+{
+	if (bRetained)
+	{
+		return;
+	}
+
+	// switch at once on this machine, then tell the server so everyone else sees it
+	bFlashlightOn = !bFlashlightOn;
+	OnRep_Flashlight();
+	Server_SetFlashlight(bFlashlightOn);
+}
+
+void AFacilityCharacter::Server_SetFlashlight_Implementation(bool bOn)
+{
+	bFlashlightOn = bOn;
+	OnRep_Flashlight();
+}
+
+void AFacilityCharacter::OnRep_Flashlight()
+{
+	Flashlight->SetVisibility(bFlashlightOn && !bRetained);
+}
+
+void AFacilityCharacter::DoUseItem()
+{
+	if (bRetained)
+	{
+		Server_CycleSpectate();
+		return;
+	}
+
+	if (IsStanding() && HasKey(FlashCameraId))
+	{
+		Server_UseFlash();
+	}
+}
+
+void AFacilityCharacter::Server_UseFlash_Implementation()
+{
+	if (!IsStanding() || !RemoveKey(FlashCameraId))
+	{
+		return;
+	}
+
+	const FVector Eye = GetPawnViewLocation();
+	const FVector Direction = GetBaseAimRotation().Vector();
+	Multicast_FlashEffect(Eye + Direction * 30.0f);
+
+	// players never block the flash; walls and doors do
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FacilityFlash), false, this);
+	for (TActorIterator<AFacilityCharacter> It(GetWorld()); It; ++It)
+	{
+		Params.AddIgnoredActor(*It);
+	}
+
+	int32 NumStunned = 0;
+	for (TActorIterator<AFacilityMarked> It(GetWorld()); It; ++It)
+	{
+		AFacilityMarked* Creature = *It;
+		if (!Creature->IsPresent())
+		{
+			continue;
+		}
+
+		const FVector ToCreature = Creature->GetActorLocation() - Eye;
+		if (ToCreature.SizeSquared() > FMath::Square(FlashRange)
+			|| FVector::DotProduct(Direction, ToCreature.GetSafeNormal()) < FMath::Cos(FMath::DegreesToRadians(FlashHalfAngle)))
+		{
+			continue;
+		}
+
+		FCollisionQueryParams CreatureParams = Params;
+		CreatureParams.AddIgnoredActor(Creature);
+		if (GetWorld()->LineTraceTestByChannel(Eye, Creature->GetActorLocation(), ECC_Visibility, CreatureParams))
+		{
+			continue;
+		}
+
+		Creature->Stun(FlashStunTime);
+		++NumStunned;
+	}
+
+	UE_LOG(LogTheFacility, Log, TEXT("%s used the flash camera: %s"), GetPlayerState() ? *GetPlayerState()->GetPlayerName() : *GetName(),
+		NumStunned > 0 ? TEXT("The Marked is stunned") : TEXT("nothing caught in the flash"));
+}
+
+void AFacilityCharacter::Multicast_FlashEffect_Implementation(FVector_NetQuantize Location)
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (IsLocallyControlled())
+	{
+		LastFlashTime = GetWorld()->GetTimeSeconds();
+	}
+
+	// a short, harsh burst of light where the camera went off
+	UPointLightComponent* Burst = NewObject<UPointLightComponent>(this);
+	Burst->SetMobility(EComponentMobility::Movable);
+	Burst->SetIntensityUnits(ELightUnits::Candelas);
+	Burst->SetIntensity(3000.0f);
+	Burst->SetAttenuationRadius(1500.0f);
+	Burst->SetCastShadows(false);
+	Burst->RegisterComponent();
+	Burst->SetWorldLocation(Location);
+
+	TWeakObjectPtr<UPointLightComponent> WeakBurst = Burst;
+	FTimerHandle BurstTimer;
+	GetWorldTimerManager().SetTimer(BurstTimer, FTimerDelegate::CreateWeakLambda(this, [WeakBurst]()
+	{
+		if (WeakBurst.IsValid())
+		{
+			WeakBurst->DestroyComponent();
+		}
+	}), 0.12f, false);
+}
+
+void AFacilityCharacter::DoRestart()
+{
+	// only meaningful once the run is over; the server checks that it came from the host
+	const AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
+	if (GameState && !GameState->IsRunInProgress())
+	{
+		Server_Restart();
+	}
+}
+
+void AFacilityCharacter::Server_Restart_Implementation()
+{
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || !PC->IsLocalController())
+	{
+		UE_LOG(LogTheFacility, Log, TEXT("Restart ignored: only the host can start a new run"));
+		return;
+	}
+
+	if (AFacilityGameMode* GameMode = GetWorld()->GetAuthGameMode<AFacilityGameMode>())
+	{
+		GameMode->RestartRun();
+	}
+}
+
+void AFacilityCharacter::GiveKey(FName KeyId, const FText& DisplayName, FName SignatureId, FName ZoneId)
+{
+	if (!HasAuthority() || KeyId.IsNone())
+	{
+		return;
+	}
+
+	HeldKeys.AddUnique(KeyId);
+
+	FFacilityHeldItemInfo& Info = HeldItemInfo.FindOrAdd(KeyId);
+	Info.DisplayName = DisplayName.IsEmpty() ? GetItemName(KeyId) : DisplayName;
+	Info.SignatureId = SignatureId;
+	Info.ZoneId = ZoneId;
+}
+
+bool AFacilityCharacter::RemoveKey(FName KeyId)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	HeldItemInfo.Remove(KeyId);
+	return HeldKeys.Remove(KeyId) > 0;
+}
+
+FText AFacilityCharacter::GetItemName(FName KeyId)
+{
+	if (KeyId == FlashCameraId)
+	{
+		return NSLOCTEXT("Facility", "ItemFlashCamera", "Flash camera");
+	}
+	if (KeyId == TEXT("Fuse"))
+	{
+		return NSLOCTEXT("Facility", "ItemFuse", "Fuse");
+	}
+	return FText::FromName(KeyId);
 }
 
 void AFacilityCharacter::FacilityRespawn()
@@ -155,47 +462,218 @@ void AFacilityCharacter::Server_DebugRespawn_Implementation()
 #endif
 }
 
+void AFacilityCharacter::Server_DebugGoto_Implementation(FVector_NetQuantize Location, float Yaw)
+{
+#if !UE_BUILD_SHIPPING
+	if (!IsStanding())
+	{
+		return;
+	}
+
+	UE_LOG(LogTheFacility, Log, TEXT("Debug goto: %s to %s"), *GetName(), *FVector(Location).ToCompactString());
+	TeleportTo(Location, FRotator(0.0f, Yaw, 0.0f));
+#endif
+}
+
 void AFacilityCharacter::SetDowned(bool bNewDowned)
 {
-	if (!HasAuthority() || bDowned == bNewDowned)
+	if (!HasAuthority() || bRetained || bDowned == bNewDowned)
 	{
 		return;
 	}
 
 	bDowned = bNewDowned;
-	ApplyDowned();
+	DownedTime = 0.0f;
+	DownedDeadline = 0.0;
+	bDownedRecoversAlone = false;
+	ApplyLifeState();
 	UE_LOG(LogTheFacility, Log, TEXT("%s is %s"), GetPlayerState() ? *GetPlayerState()->GetPlayerName() : *GetName(), bDowned ? TEXT("down") : TEXT("back up"));
 
-	GetWorldTimerManager().ClearTimer(RecoverTimer);
+	GetWorldTimerManager().ClearTimer(DownedTimer);
 	if (bDowned)
 	{
-		GetWorldTimerManager().SetTimer(RecoverTimer, this, &AFacilityCharacter::RecoverIfAlone, FMath::Max(AloneRecoverTime, 0.01f), false);
+		// re-evaluated the whole time they are down, so a helper leaving or arriving is always noticed
+		GetWorldTimerManager().SetTimer(DownedTimer, this, &AFacilityCharacter::TickDowned, DownedTickInterval, true);
+		TickDowned();
 	}
 }
 
-void AFacilityCharacter::RecoverIfAlone()
+void AFacilityCharacter::TickDowned()
+{
+	if (!bDowned)
+	{
+		GetWorldTimerManager().ClearTimer(DownedTimer);
+		return;
+	}
+
+	// a finished run freezes everyone as they are
+	const AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
+	if (GameState && !GameState->IsRunInProgress())
+	{
+		DownedDeadline = 0.0;
+		return;
+	}
+
+	const bool bAlone = !IsAnyoneElseStanding();
+	if (bAlone && bUsedAloneRecovery)
+	{
+		// nobody can come, and the Facility has already let this one go once
+		Retain();
+		return;
+	}
+
+	const float Limit = bAlone ? AloneRecoverTime : BleedOutTime;
+	const double Now = GameState ? GameState->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+	DownedDeadline = Now + FMath::Max(Limit - DownedTime, 0.0f);
+	bDownedRecoversAlone = bAlone;
+
+	if (DownedTime >= Limit)
+	{
+		if (bAlone)
+		{
+			bUsedAloneRecovery = true;
+			UE_LOG(LogTheFacility, Log, TEXT("%s gets up alone (once per run)"), GetPlayerState() ? *GetPlayerState()->GetPlayerName() : *GetName());
+			SetDowned(false);
+		}
+		else
+		{
+			Retain();
+		}
+		return;
+	}
+
+	DownedTime += DownedTickInterval;
+}
+
+bool AFacilityCharacter::IsAnyoneElseStanding() const
 {
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
 		const AFacilityCharacter* Other = It->Get() ? Cast<AFacilityCharacter>(It->Get()->GetPawn()) : nullptr;
-		if (Other && Other != this && !Other->IsDowned())
+		if (Other && Other != this && Other->IsStanding())
 		{
-			// someone could help; leave it to them
-			return;
+			return true;
 		}
 	}
 
-	SetDowned(false);
+	return false;
 }
 
-void AFacilityCharacter::OnRep_Downed()
+float AFacilityCharacter::GetDownedTimeLeft(bool& bOutRecoversAlone) const
 {
-	ApplyDowned();
+	bOutRecoversAlone = bDownedRecoversAlone;
+	const AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
+	if (!bDowned || DownedDeadline <= 0.0 || !GameState)
+	{
+		return 0.0f;
+	}
+
+	return static_cast<float>(FMath::Max(DownedDeadline - GameState->GetServerWorldTimeSeconds(), 0.0));
 }
 
-void AFacilityCharacter::ApplyDowned()
+void AFacilityCharacter::Retain()
 {
-	if (bDowned)
+	if (!HasAuthority() || bRetained)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(DownedTimer);
+	bDowned = false;
+	bRetained = true;
+	DownedDeadline = 0.0;
+	UE_LOG(LogTheFacility, Log, TEXT("%s is retained by the Facility"), GetPlayerState() ? *GetPlayerState()->GetPlayerName() : *GetName());
+
+	DropHeldItems();
+	ApplyLifeState();
+	SpectateNext();
+
+	// anyone who was watching this player moves on to someone still here
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		AFacilityCharacter* Watcher = PC ? Cast<AFacilityCharacter>(PC->GetPawn()) : nullptr;
+		if (Watcher && Watcher != this && Watcher->IsRetained() && PC->GetViewTarget() == this)
+		{
+			Watcher->SpectateNext();
+		}
+	}
+}
+
+void AFacilityCharacter::DropHeldItems()
+{
+	if (HeldKeys.IsEmpty())
+	{
+		return;
+	}
+
+	const FVector Feet = GetActorLocation() - FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - 25.0f);
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	for (int32 Index = 0; Index < HeldKeys.Num(); ++Index)
+	{
+		const FName KeyId = HeldKeys[Index];
+		const FFacilityHeldItemInfo Info = HeldItemInfo.FindRef(KeyId);
+		const float Angle = Index * 2.1f;
+		const FVector Location = Feet + FVector(FMath::Cos(Angle) * 40.0f, FMath::Sin(Angle) * 40.0f, 0.0f);
+
+		if (AFacilityPickup* Dropped = GetWorld()->SpawnActor<AFacilityPickup>(AFacilityPickup::StaticClass(), Location, FRotator::ZeroRotator, SpawnParams))
+		{
+			Dropped->InitDropped(KeyId, Info.DisplayName.IsEmpty() ? GetItemName(KeyId) : Info.DisplayName, Info.SignatureId, Info.ZoneId);
+			UE_LOG(LogTheFacility, Log, TEXT("Dropped %s%s"), *KeyId.ToString(), Info.SignatureId.IsNone() ? TEXT("") : TEXT(" (still an Offering)"));
+		}
+	}
+
+	HeldKeys.Reset();
+	HeldItemInfo.Reset();
+}
+
+void AFacilityCharacter::SpectateNext()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!HasAuthority() || !PC)
+	{
+		return;
+	}
+
+	TArray<AFacilityCharacter*> Candidates;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		AFacilityCharacter* Other = It->Get() ? Cast<AFacilityCharacter>(It->Get()->GetPawn()) : nullptr;
+		if (Other && Other != this && !Other->IsRetained())
+		{
+			Candidates.Add(Other);
+		}
+	}
+
+	if (Candidates.IsEmpty())
+	{
+		PC->SetViewTargetWithBlend(this);
+		return;
+	}
+
+	const AActor* Current = PC->GetViewTarget();
+	const int32 CurrentIndex = Candidates.IndexOfByPredicate([Current](const AFacilityCharacter* Candidate) { return Candidate == Current; });
+	PC->SetViewTargetWithBlend(Candidates[(CurrentIndex + 1) % Candidates.Num()], 0.4f);
+}
+
+void AFacilityCharacter::Server_CycleSpectate_Implementation()
+{
+	if (bRetained)
+	{
+		SpectateNext();
+	}
+}
+
+void AFacilityCharacter::OnRep_LifeState()
+{
+	ApplyLifeState();
+}
+
+void AFacilityCharacter::ApplyLifeState()
+{
+	if (bDowned || bRetained)
 	{
 		GetCharacterMovement()->StopMovementImmediately();
 		GetCharacterMovement()->DisableMovement();
@@ -204,12 +682,17 @@ void AFacilityCharacter::ApplyDowned()
 	{
 		GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 	}
+
+	// a retained player is gone from the world for everyone; their camera follows a teammate
+	SetActorHiddenInGame(bRetained);
+	SetActorEnableCollision(!bRetained);
+	Flashlight->SetVisibility(bFlashlightOn && !bRetained);
 }
 
 bool AFacilityCharacter::CanInteract_Implementation(APawn* InstigatorPawn) const
 {
 	const AFacilityCharacter* Helper = Cast<AFacilityCharacter>(InstigatorPawn);
-	return bDowned && Helper && Helper != this && !Helper->IsDowned();
+	return bDowned && !bRetained && Helper && Helper != this && Helper->IsStanding();
 }
 
 FText AFacilityCharacter::GetInteractPrompt_Implementation(APawn* InstigatorPawn) const

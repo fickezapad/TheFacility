@@ -33,6 +33,21 @@ void AFacilityPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AFacilityPickup, bTaken);
+	DOREPLIFETIME_CONDITION(AFacilityPickup, DisplayName, COND_InitialOnly);
+}
+
+void AFacilityPickup::InitDropped(FName KeyId, const FText& Name, FName InSignatureId, FName InZoneId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	GrantedKeyId = KeyId;
+	DisplayName = Name;
+	SignatureId = InSignatureId;
+	ZoneId = InZoneId;
+	PlacementGroup = NAME_None;
 }
 
 bool AFacilityPickup::CanInteract_Implementation(APawn* InstigatorPawn) const
@@ -58,7 +73,8 @@ void AFacilityPickup::Interact_Implementation(APawn* InstigatorPawn)
 
 	if (AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn))
 	{
-		Character->GiveKey(GrantedKeyId);
+		// remember what was signed for it, so a dropped Offering is still one
+		Character->GiveKey(GrantedKeyId, DisplayName, SignatureId, ZoneId);
 	}
 
 	if (IsOffering())

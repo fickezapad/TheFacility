@@ -46,6 +46,7 @@ void AFacilityDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 
 	DOREPLIFETIME(AFacilityDoor, bOpen);
 	DOREPLIFETIME(AFacilityDoor, bLocked);
+	DOREPLIFETIME(AFacilityDoor, bSwingReversed);
 }
 
 void AFacilityDoor::BeginPlay()
@@ -73,7 +74,7 @@ void AFacilityDoor::Tick(float DeltaSeconds)
 		OpenAlpha = Target;
 	}
 
-	Hinge->SetRelativeRotation(FRotator(0.0f, OpenYaw * OpenAlpha, 0.0f));
+	Hinge->SetRelativeRotation(FRotator(0.0f, (bSwingReversed ? -OpenYaw : OpenYaw) * OpenAlpha, 0.0f));
 
 	if (bArrived)
 	{
@@ -89,6 +90,20 @@ void AFacilityDoor::OnRep_Open()
 void AFacilityDoor::StartSwing()
 {
 	SetActorTickEnabled(true);
+}
+
+void AFacilityDoor::Open(const APawn* Opener)
+{
+	// pick a side only from fully closed: a door caught mid-swing keeps going the way it was
+	if (bSwingAwayFromOpener && Opener && OpenAlpha <= KINDA_SMALL_NUMBER)
+	{
+		// closed, the slab lies along local Y and a positive yaw swings it toward local -X
+		const float OpenerSide = GetActorTransform().InverseTransformPosition(Opener->GetActorLocation()).X;
+		bSwingReversed = (OpenYaw > 0.0f) == (OpenerSide < 0.0f);
+	}
+
+	bOpen = true;
+	StartSwing();
 }
 
 bool AFacilityDoor::PawnHasKey(const APawn* InstigatorPawn) const
@@ -127,11 +142,16 @@ void AFacilityDoor::Interact_Implementation(APawn* InstigatorPawn)
 		}
 
 		bLocked = false;
-		bOpen = true;
+		Open(InstigatorPawn);
+		return;
+	}
+
+	if (bOpen)
+	{
+		bOpen = false;
 		StartSwing();
 		return;
 	}
 
-	bOpen = !bOpen;
-	StartSwing();
+	Open(InstigatorPawn);
 }

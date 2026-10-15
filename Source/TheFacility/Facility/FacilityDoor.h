@@ -38,6 +38,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Door", meta=(Units="deg"))
 	float OpenYaw = 90.0f;
 
+	/** Swing away from whoever opens the door, so it never swings into them and pins them behind it */
+	UPROPERTY(EditAnywhere, Category="Door")
+	bool bSwingAwayFromOpener = true;
+
 	/** Swing speed */
 	UPROPERTY(EditAnywhere, Category="Door", meta=(ClampMin=0, Units="deg"))
 	float SwingDegreesPerSecond = 180.0f;
@@ -50,6 +54,10 @@ protected:
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Door")
 	bool bLocked = false;
+
+	/** Swings to -OpenYaw this time, chosen by the server when the door opens */
+	UPROPERTY(Replicated)
+	bool bSwingReversed = false;
 
 public:
 
@@ -77,4 +85,7 @@ protected:
 
 	/** Starts ticking until the swing reaches the current open state */
 	void StartSwing();
+
+	/** Server: opens the door, swinging away from Opener if that is enabled */
+	void Open(const APawn* Opener);
 };

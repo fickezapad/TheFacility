@@ -50,7 +50,8 @@ protected:
 	class UInputAction* MouseLookAction;
 	
 public:
-	ATheFacilityCharacter();
+	/** Takes an object initializer so subclasses can swap default subobjects, e.g. the movement component */
+	ATheFacilityCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 protected:
 

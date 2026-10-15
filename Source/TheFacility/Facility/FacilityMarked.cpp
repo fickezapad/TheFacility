@@ -115,6 +115,7 @@ void AFacilityMarked::BeginPlay()
 void AFacilityMarked::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(StateTimer);
+	GetWorldTimerManager().ClearTimer(StunTimer);
 	RestoreLights();
 
 	Super::EndPlay(EndPlayReason);
@@ -135,8 +136,37 @@ void AFacilityMarked::BindToLedger()
 void AFacilityMarked::HandleSignatureRecorded(const FFacilitySignature& Signature)
 {
 	// fires on every machine, but only the server decides
-	if (!HasAuthority() || bArmed || Signature.SignatureId != ArmedBySignatureId || !Signature.Signer)
+	if (!HasAuthority() || bShutDown)
 	{
+		return;
+	}
+
+	if (HastenedBySignatureIds.Contains(Signature.SignatureId))
+	{
+		WithdrawScale *= 0.5f;
+		UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s signed %s, it will return faster (withdraw %.1f s)"), *Signature.SignerName, *Signature.SignatureId.ToString(), WithdrawTime * WithdrawScale);
+	}
+
+	if (Signature.SignatureId != ArmedBySignatureId || !IsValid(Signature.Signer))
+	{
+		return;
+	}
+
+	if (bArmed)
+	{
+		// signed again (a dropped Offering picked up): the bond passes on only if the old mark is out of the run
+		const AFacilityCharacter* OldPawn = HasValidMark() ? Cast<AFacilityCharacter>(Mark->GetPawn()) : nullptr;
+		if (OldPawn && !OldPawn->IsRetained())
+		{
+			return;
+		}
+
+		UE_LOG(LogTheFacility, Log, TEXT("The Marked: the bond passes to %s"), *Signature.SignerName);
+		Mark = Signature.Signer;
+		GetWorldTimerManager().ClearTimer(StateTimer);
+		SetMarkedState(EMarkedState::Dormant);
+		SetActorTransform(HomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+		Manifest();
 		return;
 	}
 
@@ -147,6 +177,12 @@ void AFacilityMarked::HandleSignatureRecorded(const FFacilitySignature& Signatur
 	Manifest();
 }
 
+bool AFacilityMarked::HasValidMark() const
+{
+	// a player who left has a PlayerState pending destruction; IsValid sees that at once, unlike a null check
+	return IsValid(Mark);
+}
+
 void AFacilityMarked::Manifest()
 {
 	SetMarkedState(EMarkedState::Manifesting);
@@ -155,7 +191,7 @@ void AFacilityMarked::Manifest()
 
 void AFacilityMarked::Appear()
 {
-	if (!Mark)
+	if (!HasValidMark())
 	{
 		UE_LOG(LogTheFacility, Log, TEXT("The Marked: its mark left the game, staying dormant"));
 		SetMarkedState(EMarkedState::Dormant);
@@ -180,6 +216,7 @@ void AFacilityMarked::CatchMark()
 	}
 
 	// withdraw: gone for everyone, back home, and return once the mark has been up for a while
+	GetWorldTimerManager().ClearTimer(StunTimer);
 	SetMarkedState(EMarkedState::Dormant);
 	SetActorTransform(HomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
 	GetWorldTimerManager().SetTimer(StateTimer, this, &AFacilityMarked::TryReturn, 2.0f, false);
@@ -187,13 +224,18 @@ void AFacilityMarked::CatchMark()
 
 void AFacilityMarked::TryReturn()
 {
-	if (!Mark)
+	if (bShutDown)
+	{
+		return;
+	}
+
+	if (!HasValidMark())
 	{
 		UE_LOG(LogTheFacility, Log, TEXT("The Marked: its mark left the game, staying dormant"));
 		return;
 	}
 
-	// wait until the mark is back on their feet
+	// wait until the mark is back on their feet. A retained mark keeps it waiting until someone signs for its Offering again
 	if (!GetHuntablePawn())
 	{
 		GetWorldTimerManager().SetTimer(StateTimer, this, &AFacilityMarked::TryReturn, 2.0f, false);
@@ -201,8 +243,45 @@ void AFacilityMarked::TryReturn()
 	}
 
 	// then give them time to get away before it starts coming back
-	UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s is back up, returning in %.1f s"), *Mark->GetPlayerName(), WithdrawTime + ManifestDelay);
-	GetWorldTimerManager().SetTimer(StateTimer, this, &AFacilityMarked::Manifest, FMath::Max(WithdrawTime, 0.01f), false);
+	const float Withdraw = WithdrawTime * WithdrawScale;
+	UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s is back up, returning in %.1f s"), *Mark->GetPlayerName(), Withdraw + ManifestDelay);
+	GetWorldTimerManager().SetTimer(StateTimer, this, &AFacilityMarked::Manifest, FMath::Max(Withdraw, 0.01f), false);
+}
+
+void AFacilityMarked::Stun(float Duration)
+{
+	if (!HasAuthority() || !IsPresent() || State == EMarkedState::Stunned)
+	{
+		return;
+	}
+
+	UE_LOG(LogTheFacility, Log, TEXT("The Marked is stunned for %.1f s"), Duration);
+	SetMarkedState(EMarkedState::Stunned);
+	GetWorldTimerManager().SetTimer(StunTimer, this, &AFacilityMarked::EndStun, FMath::Max(Duration, 0.01f), false);
+}
+
+void AFacilityMarked::EndStun()
+{
+	if (State == EMarkedState::Stunned)
+	{
+		// it lost track while blinded
+		SetMarkedState(EMarkedState::Searching);
+	}
+}
+
+void AFacilityMarked::ShutDown()
+{
+	if (!HasAuthority() || bShutDown)
+	{
+		return;
+	}
+
+	bShutDown = true;
+	GetWorldTimerManager().ClearTimer(StateTimer);
+	GetWorldTimerManager().ClearTimer(StunTimer);
+	SetMarkedState(EMarkedState::Dormant);
+	SetActorTransform(HomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	UE_LOG(LogTheFacility, Log, TEXT("The Marked: the run is over, withdrawn for good"));
 }
 
 void AFacilityMarked::SetMarkedState(EMarkedState NewState)
@@ -222,8 +301,8 @@ void AFacilityMarked::SetMarkedState(EMarkedState NewState)
 
 AFacilityCharacter* AFacilityMarked::GetHuntablePawn() const
 {
-	AFacilityCharacter* Pawn = Mark ? Cast<AFacilityCharacter>(Mark->GetPawn()) : nullptr;
-	return (Pawn && !Pawn->IsDowned()) ? Pawn : nullptr;
+	AFacilityCharacter* Pawn = HasValidMark() ? Cast<AFacilityCharacter>(Mark->GetPawn()) : nullptr;
+	return (Pawn && Pawn->IsStanding()) ? Pawn : nullptr;
 }
 
 float AFacilityMarked::GetDreadAt(const FVector& Location) const
@@ -238,7 +317,7 @@ float AFacilityMarked::GetDreadAt(const FVector& Location) const
 
 bool AFacilityMarked::IsLocalPlayerMarked() const
 {
-	if (!Mark)
+	if (!HasValidMark())
 	{
 		return false;
 	}
@@ -248,7 +327,9 @@ bool AFacilityMarked::IsLocalPlayerMarked() const
 		const APlayerController* PC = It->Get();
 		if (PC && PC->IsLocalController() && PC->PlayerState == Mark)
 		{
-			return true;
+			// a retained mark watches the others now, and sees it the way they do
+			const AFacilityCharacter* MarkPawn = Cast<AFacilityCharacter>(PC->GetPawn());
+			return !(MarkPawn && MarkPawn->IsRetained());
 		}
 	}
 
@@ -268,7 +349,7 @@ void AFacilityMarked::ApplyPresence()
 
 	if (HasAuthority())
 	{
-		if (bPresent)
+		if (bPresent && State != EMarkedState::Stunned)
 		{
 			GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 		}

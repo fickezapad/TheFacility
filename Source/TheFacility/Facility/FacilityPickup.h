@@ -24,8 +24,8 @@ class THEFACILITY_API AFacilityPickup : public AActor, public IFacilityInteracta
 
 protected:
 
-	/** Name shown in the interaction prompt */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Pickup")
+	/** Name shown in the interaction prompt. Replicated so items dropped at runtime are named on every machine */
+	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category="Pickup")
 	FText DisplayName = NSLOCTEXT("Facility", "DefaultPickupName", "Object");
 
 	/** Key given to the player who takes this. None gives no key */
@@ -43,12 +43,31 @@ protected:
 	UPROPERTY(ReplicatedUsing=OnRep_Taken, BlueprintReadOnly, Category="Pickup")
 	bool bTaken = false;
 
+	/**
+	 *  Seeded placement: at the start of a run the server keeps one pickup per group and removes the rest.
+	 *  Place several candidates with the same group name. None means it always stays
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Placement")
+	FName PlacementGroup;
+
 public:
 
 	AFacilityPickup();
 
 	UFUNCTION(BlueprintPure, Category="Pickup")
 	bool IsOffering() const { return !SignatureId.IsNone(); }
+
+	FName GetPlacementGroup() const { return PlacementGroup; }
+
+	FName GetGrantedKeyId() const { return GrantedKeyId; }
+
+	FName GetSignatureId() const { return SignatureId; }
+
+	/**
+	 *  Server only, right after spawning: turns this into an item a player dropped.
+	 *  An Offering stays an Offering, so whoever picks it up signs for it again
+	 */
+	void InitDropped(FName KeyId, const FText& Name, FName InSignatureId, FName InZoneId);
 
 	// IFacilityInteractable
 	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;
