@@ -2,6 +2,7 @@
 
 #include "Facility/FacilityGameMode.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDirector.h"
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityHUD.h"
@@ -68,6 +69,12 @@ void AFacilityGameMode::StartPlay()
 	}
 
 	ApplySeededPlacement();
+
+	// the Facility only answers on maps with a way out: the test maps without an exit stay as they were
+	if (TActorIterator<AFacilityExit>(GetWorld()) && !AFacilityDirector::Get(GetWorld()))
+	{
+		GetWorld()->SpawnActor<AFacilityDirector>();
+	}
 
 	GetWorldTimerManager().SetTimer(EvaluateTimer, this, &AFacilityGameMode::EvaluateRun, EvaluateInterval, true);
 }
@@ -219,6 +226,10 @@ void AFacilityGameMode::FinishRun(EFacilityRunState Outcome, const TArray<FStrin
 	for (TActorIterator<AFacilityTenant> It(GetWorld()); It; ++It)
 	{
 		It->ShutDown();
+	}
+	if (AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
+	{
+		Director->ShutDown();
 	}
 }
 

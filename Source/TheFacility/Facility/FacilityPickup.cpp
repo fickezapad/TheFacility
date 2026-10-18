@@ -52,11 +52,18 @@ void AFacilityPickup::InitDropped(FName KeyId, const FText& Name, FName InSignat
 
 bool AFacilityPickup::CanInteract_Implementation(APawn* InstigatorPawn) const
 {
-	return !bTaken;
+	// hands are full: nobody carries two of the same thing
+	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
+	return !bTaken && !(Character && !GrantedKeyId.IsNone() && Character->HasKey(GrantedKeyId));
 }
 
 FText AFacilityPickup::GetInteractPrompt_Implementation(APawn* InstigatorPawn) const
 {
+	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
+	if (!bTaken && Character && !GrantedKeyId.IsNone() && Character->HasKey(GrantedKeyId))
+	{
+		return FText::Format(NSLOCTEXT("Facility", "AlreadyCarrying", "You already carry a {0}"), DisplayName);
+	}
 	return FText::Format(NSLOCTEXT("Facility", "TakePrompt", "Take {0}"), DisplayName);
 }
 

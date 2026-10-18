@@ -10,7 +10,7 @@
 class UStaticMeshComponent;
 
 /**
- *  The motel's fuse box. A player carrying a fuse fits it, and the power comes back for everyone:
+ *  The motel's fuse box. Players carrying fuses fit them one at a time; with the last one the power comes back for everyone:
  *  lights on the main circuit turn on and the exit gate opens.
  *  The power state lives on the game state, so the box itself only needs to replicate as an interactable.
  */
@@ -28,6 +28,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fuse Box")
 	FName RequiredItemId = TEXT("Fuse");
 
+	/** Fuses it takes before the power comes back. Each one is fitted separately, by whoever carries it */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fuse Box", meta=(ClampMin=1))
+	int32 FusesRequired = 1;
+
+	/** Fuses fitted so far */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Fuse Box")
+	int32 FusesFitted = 0;
+
+	/** How far fitting a fuse that doesn't yet bring the power back carries */
+	UPROPERTY(EditAnywhere, Category="Fuse Box", meta=(ClampMin=0, Units="cm"))
+	float FitNoiseRadius = 1200.0f;
+
 	/** How far the power coming back carries, for the Tenant */
 	UPROPERTY(EditAnywhere, Category="Fuse Box", meta=(ClampMin=0, Units="cm"))
 	float PowerNoiseRadius = 3000.0f;
@@ -35,6 +47,12 @@ protected:
 public:
 
 	AFacilityFuseBox();
+
+	int32 GetFusesRequired() const { return FusesRequired; }
+
+	int32 GetFusesFitted() const { return FusesFitted; }
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	// IFacilityInteractable
 	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;

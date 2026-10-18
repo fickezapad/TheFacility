@@ -8,7 +8,9 @@
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
+#include "TheFacility.h"
 
 AFacilityFuseBox::AFacilityFuseBox()
 {
@@ -25,6 +27,13 @@ AFacilityFuseBox::AFacilityFuseBox()
 		Mesh->SetStaticMesh(CubeMesh.Object);
 		Mesh->SetRelativeScale3D(FVector(0.15f, 0.6f, 0.4f));
 	}
+}
+
+void AFacilityFuseBox::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AFacilityFuseBox, FusesFitted);
 }
 
 bool AFacilityFuseBox::IsPowerRestored() const
@@ -51,7 +60,16 @@ FText AFacilityFuseBox::GetInteractPrompt_Implementation(APawn* InstigatorPawn) 
 		return NSLOCTEXT("Facility", "FuseBoxOn", "Fuse box: power on");
 	}
 
-	return PawnHasFuse(InstigatorPawn) ? NSLOCTEXT("Facility", "FuseBoxFit", "Fit the fuse") : NSLOCTEXT("Facility", "FuseBoxEmpty", "Fuse box: one fuse missing");
+	const int32 Missing = FMath::Max(FusesRequired - FusesFitted, 1);
+	if (PawnHasFuse(InstigatorPawn))
+	{
+		return Missing > 1
+			? FText::Format(NSLOCTEXT("Facility", "FuseBoxFitOneOf", "Fit the fuse ({0} more after this)"), Missing - 1)
+			: NSLOCTEXT("Facility", "FuseBoxFit", "Fit the fuse");
+	}
+	return Missing > 1
+		? FText::Format(NSLOCTEXT("Facility", "FuseBoxEmptyMany", "Fuse box: {0} fuses missing"), Missing)
+		: NSLOCTEXT("Facility", "FuseBoxEmpty", "Fuse box: one fuse missing");
 }
 
 void AFacilityFuseBox::Interact_Implementation(APawn* InstigatorPawn)
@@ -60,6 +78,14 @@ void AFacilityFuseBox::Interact_Implementation(APawn* InstigatorPawn)
 	AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
 	if (!HasAuthority() || !Character || !GameState || GameState->IsPowerRestored() || !Character->RemoveKey(RequiredItemId))
 	{
+		return;
+	}
+
+	++FusesFitted;
+	if (FusesFitted < FusesRequired)
+	{
+		UE_LOG(LogTheFacility, Log, TEXT("Fuse fitted by %s: %d of %d"), *GameState->MakeSignerName(Character->GetPlayerState()), FusesFitted, FusesRequired);
+		AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation(), FitNoiseRadius, Character);
 		return;
 	}
 

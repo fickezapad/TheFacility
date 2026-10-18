@@ -2,8 +2,10 @@
 
 #include "Facility/FacilityHUD.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDirector.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityExit.h"
+#include "Facility/FacilityFuseBox.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
@@ -46,6 +48,16 @@ void AFacilityHUD::DrawObjective(const AFacilityGameState* GameState, const AFac
 		return;
 	}
 
+	// how many fuses the box still needs, for maps where it takes more than one
+	int32 Missing = 1;
+	int32 Required = 1;
+	if (TActorIterator<AFacilityFuseBox> BoxIt(GetWorld()); BoxIt)
+	{
+		Required = BoxIt->GetFusesRequired();
+		Missing = FMath::Max(Required - BoxIt->GetFusesFitted(), 0);
+	}
+	const FString Progress = Required > 1 ? FString::Printf(TEXT(" (%d of %d fitted)"), Required - Missing, Required) : FString();
+
 	FString Objective;
 	if (GameState->IsPowerRestored())
 	{
@@ -53,15 +65,17 @@ void AFacilityHUD::DrawObjective(const AFacilityGameState* GameState, const AFac
 	}
 	else if (Character && Character->HasKey(TEXT("Fuse")))
 	{
-		Objective = TEXT("Fit the fuse in the fuse box in the lobby.");
+		Objective = TEXT("Fit the fuse in the fuse box in the lobby.") + Progress;
 	}
 	else if (const APlayerState* Carrier = GameState->GetFuseCarrier(); IsValid(Carrier))
 	{
-		Objective = FString::Printf(TEXT("%s has the fuse. Get them to the fuse box in the lobby."), *GameState->MakeSignerName(Carrier));
+		Objective = FString::Printf(TEXT("%s has a fuse. Get them to the fuse box in the lobby."), *GameState->MakeSignerName(Carrier)) + Progress;
 	}
 	else
 	{
-		Objective = TEXT("Restore the power. The fuse box in the lobby is missing a fuse.");
+		Objective = Missing > 1
+			? FString::Printf(TEXT("Restore the power. The fuse box in the lobby is missing %d fuses."), Missing)
+			: TEXT("Restore the power. The fuse box in the lobby is missing a fuse.") + Progress;
 	}
 
 	DrawCentered(Objective, Canvas->ClipX * 0.5f, 18.0f, FLinearColor(0.75f, 0.75f, 0.7f, 0.8f), GEngine->GetSmallFont());
@@ -216,6 +230,18 @@ void AFacilityHUD::DrawHUD()
 		DrawObjective(RunGameState, Character);
 	}
 
+	// the Facility's whisper: everyone sees it, it fades over a few seconds
+	if (const AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
+	{
+		float Age = 0.0f;
+		const FString& Whisper = Director->GetWhisper(Age);
+		if (!Whisper.IsEmpty() && Age < WhisperShowTime)
+		{
+			const float Alpha = FMath::Clamp(FMath::Min(Age / 0.6f, (WhisperShowTime - Age) / 1.5f), 0.0f, 1.0f);
+			DrawCentered(Whisper, CenterX, Canvas->ClipY * 0.3f, FLinearColor(0.85f, 0.3f, 0.28f, Alpha), GEngine->GetMediumFont());
+		}
+	}
+
 	// stamina: only while it isn't full
 	if (const UFacilityMovementComponent* Movement = Character ? Character->GetFacilityMovement() : nullptr)
 	{
@@ -325,6 +351,11 @@ void AFacilityHUD::DrawHUD()
 	for (TActorIterator<AFacilityTenant> It(GetWorld()); It; ++It)
 	{
 		DrawLine(FString::Printf(TEXT("Tenant: %s"), *StaticEnum<ETenantState>()->GetNameStringByValue((int64)It->GetTenantState())), 20.0f, Y, FLinearColor(1.0f, 0.75f, 0.4f));
+	}
+
+	if (const AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
+	{
+		DrawLine(FString::Printf(TEXT("Facility: attention %d, tier %d"), Director->GetAttention(), Director->GetTier()), 20.0f, Y, FLinearColor(0.9f, 0.5f, 0.5f));
 	}
 
 	DrawLine(FString::Printf(TEXT("Ledger (%d)"), GameState->GetLedger().Num()), 20.0f, Y, FLinearColor::White);

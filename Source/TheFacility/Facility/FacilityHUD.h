@@ -19,6 +19,9 @@ class THEFACILITY_API AFacilityHUD : public AHUD
 
 protected:
 
+	/** How long the Facility's whisper stays on screen */
+	static constexpr float WhisperShowTime = 6.0f;
+
 	virtual void DrawHUD() override;
 
 	void DrawLine(const FString& Text, float X, float& Y, const FLinearColor& Color);

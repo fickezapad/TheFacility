@@ -7,6 +7,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "TheFacility.h"
 
@@ -52,6 +53,7 @@ void AFacilityDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AFacilityDoor, bLocked);
 	DOREPLIFETIME(AFacilityDoor, bSwingReversed);
 	DOREPLIFETIME(AFacilityDoor, bBroken);
+	DOREPLIFETIME(AFacilityDoor, bHeldShut);
 }
 
 void AFacilityDoor::BeginPlay()
@@ -131,6 +133,7 @@ void AFacilityDoor::ToggleLock(APawn* InstigatorPawn)
 	}
 
 	bLocked = !bLocked;
+	bHeldShut = false;
 	ReportDoorNoise(LockNoiseRadius, InstigatorPawn);
 	UE_LOG(LogTheFacility, Log, TEXT("%s %s %s with the master key"), *GetNameSafe(InstigatorPawn), bLocked ? TEXT("locked") : TEXT("unlocked"), *GetName());
 }
@@ -144,11 +147,47 @@ void AFacilityDoor::BreakOpen(APawn* Breaker)
 
 	bBroken = true;
 	bLocked = false;
+	bHeldShut = false;
 	if (!bOpen)
 	{
 		Open(Breaker);
 	}
 	ReportDoorNoise(BreakNoiseRadius, Breaker);
+}
+
+void AFacilityDoor::HoldShut(float Duration)
+{
+	if (!HasAuthority() || bBroken || bLocked)
+	{
+		return;
+	}
+
+	if (bOpen)
+	{
+		bOpen = false;
+		StartSwing();
+	}
+	bLocked = true;
+	bHeldShut = true;
+	ReportDoorNoise(SlamNoiseRadius, nullptr);
+	GetWorldTimerManager().SetTimer(HoldTimer, this, &AFacilityDoor::ReleaseHold, FMath::Max(Duration, 0.1f), false);
+}
+
+void AFacilityDoor::ReleaseHold()
+{
+	if (bHeldShut && bLocked && !bBroken)
+	{
+		bLocked = false;
+		UE_LOG(LogTheFacility, Log, TEXT("The Facility lets go of %s"), *GetName());
+	}
+	bHeldShut = false;
+}
+
+void AFacilityDoor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	GetWorldTimerManager().ClearTimer(HoldTimer);
+
+	Super::EndPlay(EndPlayReason);
 }
 
 bool AFacilityDoor::PawnHasKey(const APawn* InstigatorPawn) const
@@ -171,7 +210,11 @@ FText AFacilityDoor::GetInteractPrompt_Implementation(APawn* InstigatorPawn) con
 
 	if (bLocked)
 	{
-		return PawnHasKey(InstigatorPawn) ? NSLOCTEXT("Facility", "DoorUnlock", "Unlock") : NSLOCTEXT("Facility", "DoorLocked", "Locked");
+		if (PawnHasKey(InstigatorPawn))
+		{
+			return NSLOCTEXT("Facility", "DoorUnlock", "Unlock");
+		}
+		return bHeldShut ? NSLOCTEXT("Facility", "DoorHeldShut", "Something holds it shut") : NSLOCTEXT("Facility", "DoorLocked", "Locked");
 	}
 
 	return bOpen ? NSLOCTEXT("Facility", "DoorClose", "Close") : NSLOCTEXT("Facility", "DoorOpen", "Open");
@@ -192,6 +235,7 @@ void AFacilityDoor::Interact_Implementation(APawn* InstigatorPawn)
 		}
 
 		bLocked = false;
+		bHeldShut = false;
 		Open(InstigatorPawn);
 		return;
 	}

@@ -8,7 +8,9 @@
 #if !UE_BUILD_SHIPPING
 
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDirector.h"
 #include "Facility/FacilityDoor.h"
+#include "Facility/FacilityFuseBox.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractable.h"
 #include "Facility/FacilityMarked.h"
@@ -281,6 +283,18 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQALock(
 		Door->ToggleLock(Player);
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs CmdQAAttention(
+	TEXT("facility.QA.Attention"),
+	TEXT("QA, host: adds attention to the Facility director. facility.QA.Attention <Amount>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityDirector* Director = IsHost(World, TEXT("facility.QA.Attention")) ? AFacilityDirector::Get(World) : nullptr;
+		if (Director && !Args.IsEmpty())
+		{
+			Director->AddAttention(ArgFloat(Args, 0, 0.0f), TEXT("QA"));
+		}
+	}));
+
 static FAutoConsoleCommandWithWorldAndArgs CmdQADown(
 	TEXT("facility.QA.Down"),
 	TEXT("QA, host: downs a player, or helps them up. facility.QA.Down <Player> [1|0]"),
@@ -310,6 +324,16 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 		{
 			TActorIterator<AFacilityTenant> It(World);
 			Check(Line, Args[1], It ? StaticEnum<ETenantState>()->GetNameStringByValue((int64)It->GetTenantState()) : TEXT("Missing"));
+		}
+		else if (What == TEXT("Director"))
+		{
+			const AFacilityDirector* Director = AFacilityDirector::Get(World);
+			Check(Line, Args[1], Director ? FString::FromInt(Director->GetTier()) : TEXT("Missing"));
+		}
+		else if (What == TEXT("Fuses"))
+		{
+			TActorIterator<AFacilityFuseBox> Box(World);
+			Check(Line, Args[1], Box ? FString::FromInt(Box->GetFusesFitted()) : TEXT("Missing"));
 		}
 		else if (What == TEXT("Marked"))
 		{
@@ -458,6 +482,10 @@ static FAutoConsoleCommandWithWorld CmdQADump(
 		{
 			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_STATE marked %s at %s mark %s"),
 				*StaticEnum<EMarkedState>()->GetNameStringByValue((int64)It->GetMarkedState()), *It->GetActorLocation().ToCompactString(), *GetNameSafe(It->GetMark()));
+		}
+		if (const AFacilityDirector* Director = AFacilityDirector::Get(World))
+		{
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_STATE director attention %d tier %d"), Director->GetAttention(), Director->GetTier());
 		}
 		for (TActorIterator<AFacilityDoor> It(World); It; ++It)
 		{

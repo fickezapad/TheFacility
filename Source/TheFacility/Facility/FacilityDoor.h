@@ -65,6 +65,16 @@ protected:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category="Door")
 	bool bBroken = false;
 
+	/** Locked by the Facility for a while, not by anyone's key. Lets go by itself */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Door")
+	bool bHeldShut = false;
+
+	FTimerHandle HoldTimer;
+
+	/** How far it carries when the Facility slams it */
+	UPROPERTY(EditAnywhere, Category="Door|Noise", meta=(ClampMin=0, Units="cm"))
+	float SlamNoiseRadius = 1200.0f;
+
 	/** How far opening or closing it carries, for the Tenant */
 	UPROPERTY(EditAnywhere, Category="Door|Noise", meta=(ClampMin=0, Units="cm"))
 	float SwingNoiseRadius = 900.0f;
@@ -99,6 +109,11 @@ public:
 	/** Server only. Beaten down from either side: unlocked, swung open and left that way */
 	void BreakOpen(APawn* Breaker);
 
+	/** Server only. The Facility slams it and holds it locked for Duration. The master key and the Tenant still get through */
+	void HoldShut(float Duration);
+
+	bool IsHeldShut() const { return bHeldShut; }
+
 	// IFacilityInteractable
 	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;
 	virtual FText GetInteractPrompt_Implementation(APawn* InstigatorPawn) const override;
@@ -123,4 +138,9 @@ protected:
 
 	/** Server: the door is heard by the Tenant */
 	void ReportDoorNoise(float Radius, const APawn* Source);
+
+	/** Server: the Facility lets go of it, unless someone has turned a key in it since */
+	void ReleaseHold();
+
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 };

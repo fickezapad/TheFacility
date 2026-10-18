@@ -154,6 +154,9 @@ public:
 	/** Server only. The run is over: back to its room for good */
 	void ShutDown();
 
+	/** Server only. Wakes it now if it still sleeps, whatever was signed */
+	void WakeNow(const FString& Reason);
+
 protected:
 
 	virtual void BeginPlay() override;

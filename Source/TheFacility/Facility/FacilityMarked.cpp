@@ -269,6 +269,17 @@ void AFacilityMarked::EndStun()
 	}
 }
 
+void AFacilityMarked::Hasten(const FString& Why)
+{
+	if (!HasAuthority() || bShutDown)
+	{
+		return;
+	}
+
+	WithdrawScale *= 0.5f;
+	UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s, it will return faster (withdraw %.1f s)"), *Why, WithdrawTime * WithdrawScale);
+}
+
 void AFacilityMarked::ShutDown()
 {
 	if (!HasAuthority() || bShutDown)

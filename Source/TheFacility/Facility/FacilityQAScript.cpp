@@ -11,6 +11,7 @@
 #if !UE_BUILD_SHIPPING
 
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDirector.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityGameState.h"
@@ -259,10 +260,17 @@ static FAutoConsoleCommandWithWorld CmdQAObserve(
 			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s marked %s visible_here=%d i_am_marked=%d"), Machine,
 				*StaticEnum<EMarkedState>()->GetNameStringByValue((int64)It->GetMarkedState()), It->GetMesh() && It->GetMesh()->IsVisible(), It->IsLocalPlayerMarked());
 		}
+		if (const AFacilityDirector* Director = AFacilityDirector::Get(World))
+		{
+			float Age = 0.0f;
+			const FString& Whisper = Director->GetWhisper(Age);
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s director attention=%d tier=%d darkened_lights=%d whisper=\"%s\" %.0fs ago"), Machine,
+				Director->GetAttention(), Director->GetTier(), Director->GetNumDarkened(), *Whisper, Age);
+		}
 		for (TActorIterator<AFacilityDoor> It(World); It; ++It)
 		{
-			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s door %s open=%d locked=%d broken=%d"), Machine,
-				*It->GetName(), It->IsOpen(), It->IsLocked(), It->IsBroken());
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s door %s open=%d locked=%d broken=%d held=%d"), Machine,
+				*It->GetName(), It->IsOpen(), It->IsLocked(), It->IsBroken(), It->IsHeldShut());
 		}
 	}));
 

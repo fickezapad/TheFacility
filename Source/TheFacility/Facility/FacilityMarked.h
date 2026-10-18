@@ -152,6 +152,9 @@ public:
 	/** Server only. The run is over: withdraw and never come back */
 	void ShutDown();
 
+	/** Server only. Halves how long it stays away after a catch, like a hastening signature */
+	void Hasten(const FString& Why);
+
 protected:
 
 	virtual void BeginPlay() override;

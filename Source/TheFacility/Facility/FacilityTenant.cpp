@@ -2,6 +2,7 @@
 
 #include "Facility/FacilityTenant.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDirector.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityTenantAIController.h"
 #include "Animation/AnimInstance.h"
@@ -133,6 +134,12 @@ void AFacilityTenant::ReportNoise(UWorld* World, const FVector& Location, float 
 		return;
 	}
 
+	// the Facility hears everything the Tenant could, and keeps count; its own pointing doesn't count
+	if (AFacilityDirector* Director = AFacilityDirector::Get(World); Director && Source != Director)
+	{
+		Director->HearNoise(Radius);
+	}
+
 	for (TActorIterator<AFacilityTenant> It(World); It; ++It)
 	{
 		if (*It != Source)
@@ -216,6 +223,14 @@ void AFacilityTenant::Wake(float Delay, const FString& Reason)
 	UE_LOG(LogTheFacility, Log, TEXT("The Tenant wakes: %s. Comes out in %.1f s"), *Reason, Delay);
 	SetTenantState(ETenantState::Manifesting);
 	GetWorldTimerManager().SetTimer(StateTimer, this, &AFacilityTenant::Appear, FMath::Max(Delay, 0.01f), false);
+}
+
+void AFacilityTenant::WakeNow(const FString& Reason)
+{
+	if (HasAuthority())
+	{
+		Wake(1.5f, Reason);
+	}
 }
 
 void AFacilityTenant::Appear()
