@@ -3,7 +3,7 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "GameFramework/Character.h"
 
-/** A saved move that also remembers whether the player wanted to sprint, so replays and the server agree */
+/** A saved move that also remembers whether the player wanted to sprint or sneak, so replays and the server agree */
 class FSavedMove_Facility : public FSavedMove_Character
 {
 	typedef FSavedMove_Character Super;
@@ -11,9 +11,11 @@ class FSavedMove_Facility : public FSavedMove_Character
 public:
 
 	uint8 bSavedWantsToSprint : 1;
+	uint8 bSavedWantsToSneak : 1;
 
 	FSavedMove_Facility()
 		: bSavedWantsToSprint(0)
+		, bSavedWantsToSneak(0)
 	{
 	}
 
@@ -21,6 +23,7 @@ public:
 	{
 		Super::Clear();
 		bSavedWantsToSprint = 0;
+		bSavedWantsToSneak = 0;
 	}
 
 	virtual uint8 GetCompressedFlags() const override
@@ -30,12 +33,17 @@ public:
 		{
 			Result |= FLAG_Custom_0;
 		}
+		if (bSavedWantsToSneak)
+		{
+			Result |= FLAG_Custom_1;
+		}
 		return Result;
 	}
 
 	virtual bool CanCombineWith(const FSavedMovePtr& NewMove, ACharacter* InCharacter, float MaxDelta) const override
 	{
-		if (bSavedWantsToSprint != static_cast<const FSavedMove_Facility*>(NewMove.Get())->bSavedWantsToSprint)
+		const FSavedMove_Facility* Other = static_cast<const FSavedMove_Facility*>(NewMove.Get());
+		if (bSavedWantsToSprint != Other->bSavedWantsToSprint || bSavedWantsToSneak != Other->bSavedWantsToSneak)
 		{
 			return false;
 		}
@@ -48,6 +56,7 @@ public:
 		if (const UFacilityMovementComponent* Movement = Cast<UFacilityMovementComponent>(InCharacter->GetCharacterMovement()))
 		{
 			bSavedWantsToSprint = Movement->bWantsToSprint;
+			bSavedWantsToSneak = Movement->bWantsToSneak;
 		}
 	}
 
@@ -57,6 +66,7 @@ public:
 		if (UFacilityMovementComponent* Movement = Cast<UFacilityMovementComponent>(InCharacter->GetCharacterMovement()))
 		{
 			Movement->bWantsToSprint = bSavedWantsToSprint;
+			Movement->bWantsToSneak = bSavedWantsToSneak;
 		}
 	}
 };
@@ -104,6 +114,7 @@ void UFacilityMovementComponent::UpdateFromCompressedFlags(uint8 Flags)
 	Super::UpdateFromCompressedFlags(Flags);
 
 	bWantsToSprint = (Flags & FSavedMove_Character::FLAG_Custom_0) != 0;
+	bWantsToSneak = (Flags & FSavedMove_Character::FLAG_Custom_1) != 0;
 }
 
 float UFacilityMovementComponent::GetMaxSpeed() const
@@ -118,12 +129,22 @@ float UFacilityMovementComponent::GetMaxSpeed() const
 		return ExhaustedSpeed;
 	}
 
-	return (bWantsToSprint && Stamina > 0.0f) ? SprintSpeed : WalkSpeed;
+	if (bWantsToSprint && Stamina > 0.0f)
+	{
+		return SprintSpeed;
+	}
+
+	return bWantsToSneak ? SneakSpeed : WalkSpeed;
 }
 
 bool UFacilityMovementComponent::IsSprinting() const
 {
 	return bWantsToSprint && !bExhausted && Stamina > 0.0f && IsMovingOnGround() && Velocity.SizeSquared2D() > FMath::Square(WalkSpeed + 10.0f);
+}
+
+bool UFacilityMovementComponent::IsSneaking() const
+{
+	return bWantsToSneak && !IsSprinting();
 }
 
 float UFacilityMovementComponent::GetStaminaFraction() const

@@ -7,6 +7,7 @@
 #include "Facility/FacilityInteractable.h"
 #include "FacilityCharacter.generated.h"
 
+class AFacilityDoor;
 class UFacilityInteractionComponent;
 class UFacilityMovementComponent;
 class UInputAction;
@@ -58,12 +59,15 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	TObjectPtr<UInputMappingContext> InteractMappingContext;
 
-	/** Sprint, flashlight, use item and restart. Created at runtime until input assets exist */
+	/** Sprint, sneak, flashlight, use item and restart. Created at runtime until input assets exist */
 	UPROPERTY(Transient)
 	TObjectPtr<UInputMappingContext> RunMappingContext;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> SprintAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SneakAction;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> FlashlightAction;
@@ -130,6 +134,29 @@ protected:
 
 	/** Local: world time of this player's last flash, for the screen effect */
 	float LastFlashTime = -100.0f;
+
+	/** How far a camera flash carries, for the Tenant */
+	UPROPERTY(EditAnywhere, Category="Facility|Noise", meta=(ClampMin=0, Units="cm"))
+	float FlashNoiseRadius = 1500.0f;
+
+	/** How far sprinting footsteps carry */
+	UPROPERTY(EditAnywhere, Category="Facility|Noise", meta=(ClampMin=0, Units="cm"))
+	float SprintNoiseRadius = 1500.0f;
+
+	/** How far walking footsteps carry. Keeping still makes no sound at all */
+	UPROPERTY(EditAnywhere, Category="Facility|Noise", meta=(ClampMin=0, Units="cm"))
+	float WalkNoiseRadius = 300.0f;
+
+	/** Below this speed walking is quiet */
+	UPROPERTY(EditAnywhere, Category="Facility|Noise", meta=(ClampMin=0, Units="cm/s"))
+	float QuietSpeed = 200.0f;
+
+	/** How far going down carries: a cry, a fall */
+	UPROPERTY(EditAnywhere, Category="Facility|Noise", meta=(ClampMin=0, Units="cm"))
+	float DownedNoiseRadius = 1200.0f;
+
+	/** Server: time until the next footstep sound is reported */
+	float FootstepNoiseCooldown = 0.0f;
 
 	/** True if this pawn created InteractMappingContext itself, so it must also remove it */
 	bool bOwnsInteractMappingContext = false;
@@ -200,6 +227,9 @@ public:
 	/** Display name of the keyboard key bound to Interact for the local player, e.g. "E". Empty if unknown */
 	FText GetInteractKeyText() const;
 
+	/** Closed door under the crosshair that this player can lock or unlock with the master key, or null. Owning client */
+	AFacilityDoor* GetFocusedLockableDoor() const;
+
 	/** Debug: destroys this pawn and spawns a fresh one for the same player. Console: FacilityRespawn */
 	UFUNCTION(Exec)
 	void FacilityRespawn();
@@ -230,6 +260,8 @@ protected:
 
 	void DoSprintStart();
 	void DoSprintEnd();
+	void DoSneakStart();
+	void DoSneakEnd();
 	void DoToggleFlashlight();
 	void DoUseItem();
 	void DoRestart();
@@ -248,6 +280,13 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void Server_UseFlash();
+
+	/** Locks or unlocks a door with the master key. The server checks reach and that the door is closed */
+	UFUNCTION(Server, Reliable)
+	void Server_ToggleDoorLock(AFacilityDoor* Door);
+
+	/** Server: reports this player's footsteps to the Tenant */
+	void UpdateFootstepNoise(float DeltaSeconds);
 
 	/** Retained players cycle which teammate they watch */
 	UFUNCTION(Server, Reliable)

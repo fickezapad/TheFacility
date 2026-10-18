@@ -28,6 +28,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fuse Box")
 	FName RequiredItemId = TEXT("Fuse");
 
+	/** How far the power coming back carries, for the Tenant */
+	UPROPERTY(EditAnywhere, Category="Fuse Box", meta=(ClampMin=0, Units="cm"))
+	float PowerNoiseRadius = 3000.0f;
+
 public:
 
 	AFacilityFuseBox();

@@ -2,11 +2,13 @@
 
 #include "Facility/FacilityHUD.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDoor.h"
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
+#include "Facility/FacilityTenant.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -225,6 +227,11 @@ void AFacilityHUD::DrawHUD()
 			DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.4f), CenterX - Width * 0.5f, Canvas->ClipY - 60.0f, Width, 5.0f);
 			DrawRect(BarColor, CenterX - Width * 0.5f, Canvas->ClipY - 60.0f, Width * Stamina, 5.0f);
 		}
+
+		if (Movement->IsSneaking() && Character->IsStanding())
+		{
+			DrawCentered(TEXT("sneaking"), CenterX, Canvas->ClipY - 80.0f, FLinearColor(0.6f, 0.65f, 0.7f, 0.6f), GEngine->GetSmallFont());
+		}
 	}
 
 	// what this player carries
@@ -237,6 +244,10 @@ void AFacilityHUD::DrawHUD()
 			if (Key == AFacilityCharacter::FlashCameraId)
 			{
 				Items += TEXT(" [LMB]");
+			}
+			else if (Key == AFacilityDoor::MasterKeyId)
+			{
+				Items += TEXT(" [LMB on a closed door]");
 			}
 		}
 		DrawText(TEXT("Carrying: ") + Items, FLinearColor(0.85f, 0.85f, 0.8f, 0.85f), 20.0f, Canvas->ClipY - 40.0f, GEngine->GetSmallFont());
@@ -253,6 +264,12 @@ void AFacilityHUD::DrawHUD()
 				? Prompt.ToString()
 				: FString::Printf(TEXT("[%s] %s"), *KeyText.ToString(), *Prompt.ToString());
 			DrawCentered(PromptText, CenterX, CenterY + 40.0f, FLinearColor::White, GEngine->GetMediumFont());
+		}
+
+		if (const AFacilityDoor* Door = Character->GetFocusedLockableDoor())
+		{
+			DrawCentered(Door->IsLocked() ? TEXT("[LMB] Unlock with the master key") : TEXT("[LMB] Lock with the master key"),
+				CenterX, CenterY + 66.0f, FLinearColor(0.85f, 0.8f, 0.6f), GEngine->GetSmallFont());
 		}
 	}
 
@@ -303,6 +320,11 @@ void AFacilityHUD::DrawHUD()
 			*StaticEnum<EMarkedState>()->GetNameStringByValue((int64)Marked->GetMarkedState()),
 			IsValid(MarkState) ? *MarkState->GetPlayerName() : TEXT("none"),
 			Marked->IsLocalPlayerMarked() ? TEXT(" (you)") : TEXT("")), 20.0f, Y, FLinearColor(0.8f, 0.6f, 1.0f));
+	}
+
+	for (TActorIterator<AFacilityTenant> It(GetWorld()); It; ++It)
+	{
+		DrawLine(FString::Printf(TEXT("Tenant: %s"), *StaticEnum<ETenantState>()->GetNameStringByValue((int64)It->GetTenantState())), 20.0f, Y, FLinearColor(1.0f, 0.75f, 0.4f));
 	}
 
 	DrawLine(FString::Printf(TEXT("Ledger (%d)"), GameState->GetLedger().Num()), 20.0f, Y, FLinearColor::White);

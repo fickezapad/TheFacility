@@ -11,7 +11,9 @@ class UStaticMeshComponent;
 
 /**
  *  A door that opens on interact and can require a key.
- *  Open and locked state are owned by the server and replicated; each machine animates the swing locally.
+ *  Whoever carries the master key can lock and unlock any closed door, and open any locked one.
+ *  The Tenant beats locked doors down: a broken door hangs open for the rest of the run.
+ *  Open, locked and broken state are owned by the server and replicated; each machine animates the swing locally.
  */
 UCLASS()
 class THEFACILITY_API AFacilityDoor : public AActor, public IFacilityInteractable
@@ -59,6 +61,22 @@ protected:
 	UPROPERTY(Replicated)
 	bool bSwingReversed = false;
 
+	/** Beaten down: open for good, can't be closed or locked again */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category="Door")
+	bool bBroken = false;
+
+	/** How far opening or closing it carries, for the Tenant */
+	UPROPERTY(EditAnywhere, Category="Door|Noise", meta=(ClampMin=0, Units="cm"))
+	float SwingNoiseRadius = 900.0f;
+
+	/** How far beating it down carries */
+	UPROPERTY(EditAnywhere, Category="Door|Noise", meta=(ClampMin=0, Units="cm"))
+	float BreakNoiseRadius = 2000.0f;
+
+	/** How far turning the master key in it carries */
+	UPROPERTY(EditAnywhere, Category="Door|Noise", meta=(ClampMin=0, Units="cm"))
+	float LockNoiseRadius = 300.0f;
+
 public:
 
 	AFacilityDoor();
@@ -66,6 +84,20 @@ public:
 	bool IsOpen() const { return bOpen; }
 
 	bool IsLocked() const { return bLocked; }
+
+	bool IsBroken() const { return bBroken; }
+
+	/** Item id of the master key, which opens and locks every door */
+	static const FName MasterKeyId;
+
+	/** True if this pawn may lock or unlock this door with the master key right now. Any machine */
+	bool CanToggleLock(const APawn* InstigatorPawn) const;
+
+	/** Server only. Locks or unlocks the closed door with the master key */
+	void ToggleLock(APawn* InstigatorPawn);
+
+	/** Server only. Beaten down from either side: unlocked, swung open and left that way */
+	void BreakOpen(APawn* Breaker);
 
 	// IFacilityInteractable
 	virtual bool CanInteract_Implementation(APawn* InstigatorPawn) const override;
@@ -88,4 +120,7 @@ protected:
 
 	/** Server: opens the door, swinging away from Opener if that is enabled */
 	void Open(const APawn* Opener);
+
+	/** Server: the door is heard by the Tenant */
+	void ReportDoorNoise(float Radius, const APawn* Source);
 };

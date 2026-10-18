@@ -3,6 +3,7 @@
 #include "Facility/FacilityFuseBox.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
@@ -63,4 +64,7 @@ void AFacilityFuseBox::Interact_Implementation(APawn* InstigatorPawn)
 	}
 
 	GameState->RestorePower(Character->GetPlayerState());
+
+	// the whole building hums back to life, and anything listening knows where it started
+	AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation(), PowerNoiseRadius, Character);
 }

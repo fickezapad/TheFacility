@@ -1,12 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityDoor.h"
 #include "Facility/FacilityGameMode.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
+#include "Facility/FacilityTenant.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraTypes.h"
@@ -140,6 +142,7 @@ void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputComponent, UEnhancedInputLocalPlayerSubsystem* Subsystem)
 {
 	SprintAction = NewObject<UInputAction>(this, TEXT("IA_Sprint_Default"));
+	SneakAction = NewObject<UInputAction>(this, TEXT("IA_Sneak_Default"));
 	FlashlightAction = NewObject<UInputAction>(this, TEXT("IA_Flashlight_Default"));
 	UseItemAction = NewObject<UInputAction>(this, TEXT("IA_UseItem_Default"));
 	RestartAction = NewObject<UInputAction>(this, TEXT("IA_Restart_Default"));
@@ -147,6 +150,9 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 	RunMappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Run_Default"));
 	RunMappingContext->MapKey(SprintAction, EKeys::LeftShift);
 	RunMappingContext->MapKey(SprintAction, EKeys::Gamepad_LeftThumbstick);
+	RunMappingContext->MapKey(SneakAction, EKeys::LeftControl);
+	RunMappingContext->MapKey(SneakAction, EKeys::C);
+	RunMappingContext->MapKey(SneakAction, EKeys::Gamepad_FaceButton_Right);
 	RunMappingContext->MapKey(FlashlightAction, EKeys::F);
 	RunMappingContext->MapKey(FlashlightAction, EKeys::Gamepad_DPad_Up);
 	RunMappingContext->MapKey(UseItemAction, EKeys::LeftMouseButton);
@@ -162,6 +168,8 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 	{
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoSprintStart);
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoSprintEnd);
+		EnhancedInputComponent->BindAction(SneakAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoSneakStart);
+		EnhancedInputComponent->BindAction(SneakAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoSneakEnd);
 		EnhancedInputComponent->BindAction(FlashlightAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoToggleFlashlight);
 		EnhancedInputComponent->BindAction(UseItemAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoUseItem);
 		EnhancedInputComponent->BindAction(RestartAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoRestart);
@@ -197,6 +205,11 @@ void AFacilityCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	if (HasAuthority())
+	{
+		UpdateFootstepNoise(DeltaSeconds);
+	}
+
 	if (GetNetMode() == NM_DedicatedServer || !Flashlight->IsVisible())
 	{
 		return;
@@ -205,6 +218,28 @@ void AFacilityCharacter::Tick(float DeltaSeconds)
 	// point the beam where this player looks. On other machines the aim comes from the replicated view pitch
 	const FRotator Aim = GetBaseAimRotation();
 	Flashlight->SetWorldLocationAndRotation(GetPawnViewLocation() + Aim.RotateVector(FVector(15.0f, 12.0f, -12.0f)), Aim);
+}
+
+void AFacilityCharacter::UpdateFootstepNoise(float DeltaSeconds)
+{
+	FootstepNoiseCooldown -= DeltaSeconds;
+	const UFacilityMovementComponent* Movement = GetFacilityMovement();
+	if (FootstepNoiseCooldown > 0.0f || !Movement || !IsStanding() || !Movement->IsMovingOnGround())
+	{
+		return;
+	}
+
+	// the server runs every player's movement, so it knows who is running without asking the client
+	if (Movement->IsSprinting())
+	{
+		AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation(), SprintNoiseRadius, this);
+		FootstepNoiseCooldown = 0.4f;
+	}
+	else if (GetVelocity().SizeSquared2D() > FMath::Square(QuietSpeed))
+	{
+		AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation(), WalkNoiseRadius, this);
+		FootstepNoiseCooldown = 0.5f;
+	}
 }
 
 FText AFacilityCharacter::GetInteractKeyText() const
@@ -257,6 +292,22 @@ void AFacilityCharacter::DoSprintEnd()
 	}
 }
 
+void AFacilityCharacter::DoSneakStart()
+{
+	if (UFacilityMovementComponent* Movement = GetFacilityMovement())
+	{
+		Movement->SetWantsToSneak(true);
+	}
+}
+
+void AFacilityCharacter::DoSneakEnd()
+{
+	if (UFacilityMovementComponent* Movement = GetFacilityMovement())
+	{
+		Movement->SetWantsToSneak(false);
+	}
+}
+
 void AFacilityCharacter::DoToggleFlashlight()
 {
 	if (bRetained)
@@ -289,10 +340,46 @@ void AFacilityCharacter::DoUseItem()
 		return;
 	}
 
-	if (IsStanding() && HasKey(FlashCameraId))
+	if (!IsStanding())
+	{
+		return;
+	}
+
+	// the master key turns in the door you're looking at; otherwise the flash goes off
+	if (AFacilityDoor* Door = GetFocusedLockableDoor())
+	{
+		Server_ToggleDoorLock(Door);
+		return;
+	}
+
+	if (HasKey(FlashCameraId))
 	{
 		Server_UseFlash();
 	}
+}
+
+AFacilityDoor* AFacilityCharacter::GetFocusedLockableDoor() const
+{
+	AFacilityDoor* Door = Cast<AFacilityDoor>(InteractionComponent->GetFocusedActor());
+	return (Door && Door->CanToggleLock(this)) ? Door : nullptr;
+}
+
+void AFacilityCharacter::Server_ToggleDoorLock_Implementation(AFacilityDoor* Door)
+{
+	if (!IsValid(Door) || !Door->CanToggleLock(this))
+	{
+		return;
+	}
+
+	// same reach as interacting, measured to the door's nearest edge, with the same latency allowance
+	const FBox Bounds = Door->GetComponentsBoundingBox();
+	if (Bounds.IsValid && Bounds.ComputeSquaredDistanceToPoint(GetPawnViewLocation()) > FMath::Square(300.0f))
+	{
+		UE_LOG(LogTheFacility, Log, TEXT("Lock toggle rejected, out of reach: %s -> %s"), *GetName(), *Door->GetName());
+		return;
+	}
+
+	Door->ToggleLock(this);
 }
 
 void AFacilityCharacter::Server_UseFlash_Implementation()
@@ -305,6 +392,9 @@ void AFacilityCharacter::Server_UseFlash_Implementation()
 	const FVector Eye = GetPawnViewLocation();
 	const FVector Direction = GetBaseAimRotation().Vector();
 	Multicast_FlashEffect(Eye + Direction * 30.0f);
+
+	// it can't stun what can't see, but the Tenant hears the shutter and the whine
+	AFacilityTenant::ReportNoise(GetWorld(), Eye, FlashNoiseRadius, this);
 
 	// players never block the flash; walls and doors do
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(FacilityFlash), false, this);
@@ -461,6 +551,10 @@ FText AFacilityCharacter::GetItemName(FName KeyId)
 	{
 		return NSLOCTEXT("Facility", "ItemFuse", "Fuse");
 	}
+	if (KeyId == AFacilityDoor::MasterKeyId)
+	{
+		return NSLOCTEXT("Facility", "ItemMasterKey", "Master key");
+	}
 	return FText::FromName(KeyId);
 }
 
@@ -517,6 +611,7 @@ void AFacilityCharacter::SetDowned(bool bNewDowned)
 	GetWorldTimerManager().ClearTimer(DownedTimer);
 	if (bDowned)
 	{
+		AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation(), DownedNoiseRadius, this);
 		// re-evaluated the whole time they are down, so a helper leaving or arriving is always noticed
 		GetWorldTimerManager().SetTimer(DownedTimer, this, &AFacilityCharacter::TickDowned, DownedTickInterval, true);
 		TickDowned();

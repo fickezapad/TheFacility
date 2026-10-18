@@ -2,11 +2,15 @@
 
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
+#include "TheFacility.h"
+
+const FName AFacilityDoor::MasterKeyId(TEXT("MasterKey"));
 
 AFacilityDoor::AFacilityDoor()
 {
@@ -47,6 +51,7 @@ void AFacilityDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AFacilityDoor, bOpen);
 	DOREPLIFETIME(AFacilityDoor, bLocked);
 	DOREPLIFETIME(AFacilityDoor, bSwingReversed);
+	DOREPLIFETIME(AFacilityDoor, bBroken);
 }
 
 void AFacilityDoor::BeginPlay()
@@ -104,21 +109,66 @@ void AFacilityDoor::Open(const APawn* Opener)
 
 	bOpen = true;
 	StartSwing();
+	ReportDoorNoise(SwingNoiseRadius, Opener);
+}
+
+void AFacilityDoor::ReportDoorNoise(float Radius, const APawn* Source)
+{
+	AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), Radius, Source);
+}
+
+bool AFacilityDoor::CanToggleLock(const APawn* InstigatorPawn) const
+{
+	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
+	return Character && Character->IsStanding() && Character->HasKey(MasterKeyId) && !bOpen && !bBroken;
+}
+
+void AFacilityDoor::ToggleLock(APawn* InstigatorPawn)
+{
+	if (!HasAuthority() || !CanToggleLock(InstigatorPawn))
+	{
+		return;
+	}
+
+	bLocked = !bLocked;
+	ReportDoorNoise(LockNoiseRadius, InstigatorPawn);
+	UE_LOG(LogTheFacility, Log, TEXT("%s %s %s with the master key"), *GetNameSafe(InstigatorPawn), bLocked ? TEXT("locked") : TEXT("unlocked"), *GetName());
+}
+
+void AFacilityDoor::BreakOpen(APawn* Breaker)
+{
+	if (!HasAuthority() || bBroken)
+	{
+		return;
+	}
+
+	bBroken = true;
+	bLocked = false;
+	if (!bOpen)
+	{
+		Open(Breaker);
+	}
+	ReportDoorNoise(BreakNoiseRadius, Breaker);
 }
 
 bool AFacilityDoor::PawnHasKey(const APawn* InstigatorPawn) const
 {
 	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
-	return Character && Character->HasKey(RequiredKeyId);
+	return Character && ((!RequiredKeyId.IsNone() && Character->HasKey(RequiredKeyId)) || Character->HasKey(MasterKeyId));
 }
 
 bool AFacilityDoor::CanInteract_Implementation(APawn* InstigatorPawn) const
 {
-	return !bLocked || PawnHasKey(InstigatorPawn);
+	return !bBroken && (!bLocked || PawnHasKey(InstigatorPawn));
 }
 
 FText AFacilityDoor::GetInteractPrompt_Implementation(APawn* InstigatorPawn) const
 {
+	if (bBroken)
+	{
+		return NSLOCTEXT("Facility", "DoorBroken", "Broken");
+	}
+
 	if (bLocked)
 	{
 		return PawnHasKey(InstigatorPawn) ? NSLOCTEXT("Facility", "DoorUnlock", "Unlock") : NSLOCTEXT("Facility", "DoorLocked", "Locked");
@@ -129,7 +179,7 @@ FText AFacilityDoor::GetInteractPrompt_Implementation(APawn* InstigatorPawn) con
 
 void AFacilityDoor::Interact_Implementation(APawn* InstigatorPawn)
 {
-	if (!HasAuthority())
+	if (!HasAuthority() || bBroken)
 	{
 		return;
 	}
@@ -150,6 +200,7 @@ void AFacilityDoor::Interact_Implementation(APawn* InstigatorPawn)
 	{
 		bOpen = false;
 		StartSwing();
+		ReportDoorNoise(SwingNoiseRadius, InstigatorPawn);
 		return;
 	}
 

@@ -7,6 +7,7 @@
 #include "Facility/FacilityHUD.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityPickup.h"
+#include "Facility/FacilityTenant.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
@@ -198,6 +199,10 @@ void AFacilityGameMode::FinishRun(EFacilityRunState Outcome, const TArray<FStrin
 	FacilityGameState->EndRun(Outcome, Escaped, LeftBehind);
 
 	for (TActorIterator<AFacilityMarked> It(GetWorld()); It; ++It)
+	{
+		It->ShutDown();
+	}
+	for (TActorIterator<AFacilityTenant> It(GetWorld()); It; ++It)
 	{
 		It->ShutDown();
 	}

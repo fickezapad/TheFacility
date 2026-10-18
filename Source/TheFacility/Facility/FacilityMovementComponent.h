@@ -7,8 +7,8 @@
 #include "FacilityMovementComponent.generated.h"
 
 /**
- *  Character movement for Facility players: walk, a short stamina-limited sprint, and a slow exhausted walk.
- *  Sprint intent travels inside the movement prediction (a compressed flag on every saved move), so the server
+ *  Character movement for Facility players: walk, a quiet sneak, a short stamina-limited sprint, and a slow exhausted walk.
+ *  Sprint and sneak intent travel inside the movement prediction (a compressed flag on every saved move), so the server
  *  runs the same simulation as the owning client. Nothing the client says can make it faster than the server allows,
  *  and a sprinting client doesn't rubber-band the way a locally set MaxWalkSpeed does.
  */
@@ -26,12 +26,19 @@ public:
 	/** Owning client input. Takes effect through the predicted move on both client and server */
 	void SetWantsToSprint(bool bWants) { bWantsToSprint = bWants; }
 
+	/** Owning client input: a slow walk that the Tenant can't hear. Predicted like the sprint */
+	void SetWantsToSneak(bool bWants) { bWantsToSneak = bWants; }
+
 	/** Normal walking speed. The Marked paces its chase against this, not against a sprint */
 	float GetWalkSpeed() const { return WalkSpeed; }
 
 	/** True while actually running faster than a walk */
 	UFUNCTION(BlueprintPure, Category="Facility|Sprint")
 	bool IsSprinting() const;
+
+	/** Holding the sneak walk and not sprinting */
+	UFUNCTION(BlueprintPure, Category="Facility|Sprint")
+	bool IsSneaking() const;
 
 	/** Out of breath: slow until stamina recovers past RecoverThreshold */
 	UFUNCTION(BlueprintPure, Category="Facility|Sprint")
@@ -55,6 +62,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Facility|Sprint", meta=(ClampMin=0, Units="cm/s"))
 	float SprintSpeed = 540.0f;
 
+	/** Speed while sneaking. Below the Tenant's hearing threshold for footsteps (QuietSpeed on the character) */
+	UPROPERTY(EditAnywhere, Category="Facility|Sprint", meta=(ClampMin=0, Units="cm/s"))
+	float SneakSpeed = 150.0f;
+
 	/** Speed while out of breath */
 	UPROPERTY(EditAnywhere, Category="Facility|Sprint", meta=(ClampMin=0, Units="cm/s"))
 	float ExhaustedSpeed = 220.0f;
@@ -76,6 +87,8 @@ protected:
 	virtual void OnMovementUpdated(float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity) override;
 
 	bool bWantsToSprint = false;
+
+	bool bWantsToSneak = false;
 
 	float Stamina = 0.0f;
 
