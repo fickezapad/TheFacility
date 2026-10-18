@@ -448,6 +448,18 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 			const int32 Attention = Director ? Director->GetAttention() : -1;
 			Check(Line, TEXT("1"), Director && Attention <= ArgInt(Args, 1, 0) ? TEXT("1") : FString::Printf(TEXT("0 (%d)"), Attention));
 		}
+		else if (What == TEXT("NavPath") && Args.Num() >= 5)
+		{
+			const FVector Start(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), 100.0f);
+			const FVector End(ArgFloat(Args, 3, 0.0f), ArgFloat(Args, 4, 0.0f), 100.0f);
+			const UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(World, Start, End);
+			const bool bFound = Path && Path->IsValid() && !Path->IsPartial();
+			Check(Line, TEXT("1"), bFound ? TEXT("1") : TEXT("0"));
+			if (!bQuiet)
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_STATE path length %.0f cm"), Path ? Path->GetPathLength() : -1.0f);
+			}
+		}
 		else if (What == TEXT("Hiding") && Args.Num() >= 3)
 		{
 			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
