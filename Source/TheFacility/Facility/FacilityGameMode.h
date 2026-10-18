@@ -48,6 +48,9 @@ protected:
 
 	virtual void StartPlay() override;
 
+	/** Names players from the PlayerName URL option the menu sends. The engine's own Name option is overwritten by the platform nickname */
+	virtual FString InitNewPlayer(APlayerController* NewPlayerController, const FUniqueNetIdRepl& UniqueId, const FString& Options, const FString& Portal = TEXT("")) override;
+
 	/** Keeps one pickup per placement group, chosen by the run seed, and removes the others */
 	void ApplySeededPlacement();
 

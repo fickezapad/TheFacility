@@ -72,6 +72,20 @@ void AFacilityGameMode::StartPlay()
 	GetWorldTimerManager().SetTimer(EvaluateTimer, this, &AFacilityGameMode::EvaluateRun, EvaluateInterval, true);
 }
 
+FString AFacilityGameMode::InitNewPlayer(APlayerController* NewPlayerController, const FUniqueNetIdRepl& UniqueId, const FString& Options, const FString& Portal)
+{
+	const FString Result = Super::InitNewPlayer(NewPlayerController, UniqueId, Options, Portal);
+
+	// the menu already limits it to letters, digits, - and _; trimmed again because a client can send anything
+	FString PlayerName = UGameplayStatics::ParseOption(Options, TEXT("PlayerName")).Left(20);
+	PlayerName.ReplaceInline(TEXT(" "), TEXT("_"));
+	if (!PlayerName.IsEmpty())
+	{
+		ChangeName(NewPlayerController, PlayerName, false);
+	}
+	return Result;
+}
+
 void AFacilityGameMode::ApplySeededPlacement()
 {
 	TMap<FName, TArray<AFacilityPickup*>> Groups;

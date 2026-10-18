@@ -1,0 +1,114 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/GameInstance.h"
+#include "Engine/EngineBaseTypes.h"
+#include "FacilityGameInstance.generated.h"
+
+class APlayerController;
+class SWidget;
+class UNetDriver;
+
+/**
+ *  Session flow outside the editor: hosting a run, joining one by address, leaving, and the menus around that.
+ *  Lives for the whole process, so it is also where a dropped connection is turned into a message for the main menu.
+ *  No online subsystem yet: hosting is a listen server, joining is by IP (LAN, or a forwarded port).
+ */
+UCLASS(config=Game)
+class THEFACILITY_API UFacilityGameInstance : public UGameInstance
+{
+	GENERATED_BODY()
+
+public:
+
+	virtual void Init() override;
+
+	virtual void Shutdown() override;
+
+	/** Opens the run map as a listen server with this player as host */
+	void HostRun(const FString& PlayerName);
+
+	/** Connects to a host. Address is an IP or host name, with an optional :port */
+	void JoinRun(const FString& Address, const FString& PlayerName);
+
+	/** Back to the main menu. The host leaving ends the run for everyone */
+	void LeaveRun();
+
+	void QuitToDesktop();
+
+	FString GetPlayerName() const;
+
+	const FString& GetLastAddress() const { return LastAddress; }
+
+	/** A message for the main menu (why the last run ended early), cleared once read */
+	FString ConsumeMenuMessage();
+
+	/** Main menu, on the menu map. Takes UI input */
+	void ShowMainMenu(APlayerController* PlayerController);
+
+	void HideMainMenu();
+
+	/** In-run menu over the game. The night doesn't stop while it is open */
+	void TogglePauseMenu(APlayerController* PlayerController);
+
+	void HidePauseMenu();
+
+	bool IsPauseMenuOpen() const { return PauseMenu.IsValid(); }
+
+	/** QA: where the menus are on screen, if anywhere */
+	FString DescribeMenus() const;
+
+	/** True on the machine hosting the current run */
+	bool IsHosting() const;
+
+	/** Escape or the gamepad's start button, seen before the game gets it. Returns true if a menu took it */
+	bool HandleMenuKey();
+
+protected:
+
+	/** The map a hosted run starts on */
+	UPROPERTY(config)
+	FString RunMap = TEXT("/Game/Facility/Lvl_Test_Run");
+
+	/** The map with the main menu */
+	UPROPERTY(config)
+	FString MenuMap = TEXT("/Game/Facility/Lvl_MainMenu");
+
+	/** Remembered between sessions, in the user's Game.ini */
+	UPROPERTY(config)
+	FString LastPlayerName;
+
+	UPROPERTY(config)
+	FString LastAddress = TEXT("127.0.0.1");
+
+	FString MenuMessage;
+
+	TSharedPtr<SWidget> MainMenu;
+
+	TSharedPtr<SWidget> PauseMenu;
+
+	TWeakObjectPtr<APlayerController> MenuOwner;
+
+	/** Catches the menu key anywhere in a run, whatever the pawn is doing (down, retained, spectating) */
+	TSharedPtr<class IInputProcessor> MenuKeyProcessor;
+
+	FDelegateHandle NetworkFailureHandle;
+
+	FDelegateHandle TravelFailureHandle;
+
+	void HandleNetworkFailure(UWorld* World, UNetDriver* NetDriver, ENetworkFailure::Type FailureType, const FString& ErrorString);
+
+	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& ErrorString);
+
+	/** Letters, digits, - and _ only, at most 20: it travels inside a URL */
+	static FString SanitizePlayerName(const FString& Name);
+
+	void RememberPlayer(const FString& PlayerName, const FString& Address);
+
+	/** Puts a widget over the game and points input at it */
+	void AddMenuWidget(APlayerController* PlayerController, TSharedRef<SWidget> Widget, int32 ZOrder);
+
+	void RemoveMenuWidget(TSharedPtr<SWidget>& Widget);
+};
