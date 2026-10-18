@@ -134,6 +134,14 @@ protected:
 	/** True if this pawn created InteractMappingContext itself, so it must also remove it */
 	bool bOwnsInteractMappingContext = false;
 
+	/** The body mesh as authored, captured before it is first laid down */
+	FTransform StandingMeshTransform;
+
+	bool bStandingMeshCaptured = false;
+
+	/** True while the body is shown lying down on this machine */
+	bool bShowingDownedPose = false;
+
 	/** Local player the mappings were added to, so they can be removed when this pawn goes away */
 	TWeakObjectPtr<ULocalPlayer> InteractMappingOwner;
 
@@ -205,6 +213,9 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
+	/** Someone watching a downed player sees from the floor, not from the laid-down body's tilted head */
+	virtual void CalcCamera(float DeltaTime, struct FMinimalViewInfo& OutResult) override;
+
 protected:
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
@@ -263,4 +274,10 @@ protected:
 
 	/** Server: drops everything this player carries where they are */
 	void DropHeldItems();
+
+	/** Server: tells the game state whether this player now carries the fuse */
+	void UpdateFuseCarrier();
+
+	/** Lays the body down for everyone else while downed (there is no downed animation yet) */
+	void ApplyDownedPose();
 };

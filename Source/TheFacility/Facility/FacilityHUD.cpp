@@ -53,6 +53,10 @@ void AFacilityHUD::DrawObjective(const AFacilityGameState* GameState, const AFac
 	{
 		Objective = TEXT("Fit the fuse in the fuse box in the lobby.");
 	}
+	else if (const APlayerState* Carrier = GameState->GetFuseCarrier(); IsValid(Carrier))
+	{
+		Objective = FString::Printf(TEXT("%s has the fuse. Get them to the fuse box in the lobby."), *GameState->MakeSignerName(Carrier));
+	}
 	else
 	{
 		Objective = TEXT("Restore the power. The fuse box in the lobby is missing a fuse.");
@@ -286,9 +290,11 @@ void AFacilityHUD::DrawHUD()
 		return;
 	}
 
-	DrawLine(FString::Printf(TEXT("Run: %s  seed %d  %.0f s  power %s"),
+	// maps without a way out have no power to restore, so don't claim it is off
+	const bool bHasNight = static_cast<bool>(TActorIterator<AFacilityExit>(GetWorld()));
+	DrawLine(FString::Printf(TEXT("Run: %s  seed %d  %.0f s%s"),
 		*StaticEnum<EFacilityRunState>()->GetNameStringByValue((int64)GameState->GetRunState()), GameState->GetRunSeed(), GameState->GetRunTime(),
-		GameState->IsPowerRestored() ? TEXT("on") : TEXT("off")), 20.0f, Y, FLinearColor(0.6f, 0.9f, 0.6f));
+		!bHasNight ? TEXT("") : GameState->IsPowerRestored() ? TEXT("  power on") : TEXT("  power off")), 20.0f, Y, FLinearColor(0.6f, 0.9f, 0.6f));
 
 	if (Marked)
 	{

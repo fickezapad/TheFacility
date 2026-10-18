@@ -103,6 +103,12 @@ public:
 	const TArray<FString>& GetLeftBehindNames() const { return LeftBehindNames; }
 	const FString& GetPowerRestoredBy() const { return PowerRestoredBy; }
 
+	/** The player carrying the fuse right now, if anyone */
+	APlayerState* GetFuseCarrier() const { return FuseCarrier; }
+
+	/** Server only */
+	void SetFuseCarrier(APlayerState* Carrier) { FuseCarrier = Carrier; }
+
 	/** Server only */
 	void StartRun(int32 Seed);
 
@@ -125,6 +131,10 @@ protected:
 
 	UPROPERTY(Replicated)
 	FString PowerRestoredBy;
+
+	/** Replicated so teammates know who to keep alive on the way to the fuse box */
+	UPROPERTY(Replicated)
+	TObjectPtr<APlayerState> FuseCarrier;
 
 	UPROPERTY(Replicated)
 	EFacilityRunState RunState = EFacilityRunState::InProgress;

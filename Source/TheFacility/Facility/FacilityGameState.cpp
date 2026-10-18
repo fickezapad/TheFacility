@@ -12,6 +12,7 @@ void AFacilityGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(AFacilityGameState, Ledger);
 	DOREPLIFETIME(AFacilityGameState, bPowerRestored);
 	DOREPLIFETIME(AFacilityGameState, PowerRestoredBy);
+	DOREPLIFETIME(AFacilityGameState, FuseCarrier);
 	DOREPLIFETIME(AFacilityGameState, RunState);
 	DOREPLIFETIME(AFacilityGameState, RunSeed);
 	DOREPLIFETIME(AFacilityGameState, RunStartTime);

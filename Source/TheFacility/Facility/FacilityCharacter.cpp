@@ -8,6 +8,8 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Camera/CameraTypes.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "EnhancedInputComponent.h"
@@ -413,6 +415,8 @@ void AFacilityCharacter::GiveKey(FName KeyId, const FText& DisplayName, FName Si
 	Info.DisplayName = DisplayName.IsEmpty() ? GetItemName(KeyId) : DisplayName;
 	Info.SignatureId = SignatureId;
 	Info.ZoneId = ZoneId;
+
+	UpdateFuseCarrier();
 }
 
 bool AFacilityCharacter::RemoveKey(FName KeyId)
@@ -423,7 +427,28 @@ bool AFacilityCharacter::RemoveKey(FName KeyId)
 	}
 
 	HeldItemInfo.Remove(KeyId);
-	return HeldKeys.Remove(KeyId) > 0;
+	const bool bRemoved = HeldKeys.Remove(KeyId) > 0;
+	UpdateFuseCarrier();
+	return bRemoved;
+}
+
+void AFacilityCharacter::UpdateFuseCarrier()
+{
+	AFacilityGameState* GameState = GetWorld() ? GetWorld()->GetGameState<AFacilityGameState>() : nullptr;
+	APlayerState* Mine = GetPlayerState();
+	if (!HasAuthority() || !GameState || !Mine)
+	{
+		return;
+	}
+
+	if (HeldKeys.Contains(FName(TEXT("Fuse"))))
+	{
+		GameState->SetFuseCarrier(Mine);
+	}
+	else if (GameState->GetFuseCarrier() == Mine)
+	{
+		GameState->SetFuseCarrier(nullptr);
+	}
 }
 
 FText AFacilityCharacter::GetItemName(FName KeyId)
@@ -627,6 +652,7 @@ void AFacilityCharacter::DropHeldItems()
 
 	HeldKeys.Reset();
 	HeldItemInfo.Reset();
+	UpdateFuseCarrier();
 }
 
 void AFacilityCharacter::SpectateNext()
@@ -687,6 +713,59 @@ void AFacilityCharacter::ApplyLifeState()
 	SetActorHiddenInGame(bRetained);
 	SetActorEnableCollision(!bRetained);
 	Flashlight->SetVisibility(bFlashlightOn && !bRetained);
+
+	ApplyDownedPose();
+}
+
+void AFacilityCharacter::ApplyDownedPose()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	if (!Body)
+	{
+		return;
+	}
+
+	// the owner never sees this body, and their first person camera hangs off it
+	const bool bShow = bDowned && !bRetained && !IsLocallyControlled();
+	if (bShow == bShowingDownedPose)
+	{
+		return;
+	}
+
+	if (!bStandingMeshCaptured)
+	{
+		StandingMeshTransform = Body->GetRelativeTransform();
+		bStandingMeshCaptured = true;
+	}
+
+	bShowingDownedPose = bShow;
+	if (!bShow)
+	{
+		Body->SetRelativeTransform(StandingMeshTransform);
+		CacheInitialMeshOffset(StandingMeshTransform.GetLocation(), StandingMeshTransform.Rotator());
+		return;
+	}
+
+	// tip the body over sideways, then slide it so it lies across the capsule, just above the floor
+	const FQuat Lying = FQuat(FVector::ForwardVector, FMath::DegreesToRadians(90.0f)) * StandingMeshTransform.GetRotation();
+	const FVector BodyUp = Lying.RotateVector(FVector::UpVector);
+	const FVector Location = StandingMeshTransform.GetLocation() + FVector(0.0f, 0.0f, 12.0f) - BodyUp * 85.0f;
+	Body->SetRelativeLocationAndRotation(Location, Lying);
+
+	// network smoothing puts the mesh back at its cached offset every frame on other machines, so move that too
+	CacheInitialMeshOffset(Location, Lying.Rotator());
+}
+
+void AFacilityCharacter::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
+{
+	Super::CalcCamera(DeltaTime, OutResult);
+
+	if (bShowingDownedPose)
+	{
+		const float FloorEyeHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - 30.0f;
+		OutResult.Location = GetActorLocation() - FVector(0.0f, 0.0f, FloorEyeHeight);
+		OutResult.Rotation = FRotator(FMath::Clamp(GetBaseAimRotation().Pitch, -30.0f, 40.0f), GetActorRotation().Yaw, 0.0f);
+	}
 }
 
 bool AFacilityCharacter::CanInteract_Implementation(APawn* InstigatorPawn) const
