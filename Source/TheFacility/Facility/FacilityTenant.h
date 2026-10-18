@@ -136,7 +136,10 @@ public:
 	 *  Server only. Something made a sound at Location that carries Radius cm.
 	 *  Every awake Tenant within Radius hears it; the closer, the louder. Source is never heard by itself.
 	 */
-	static void ReportNoise(UWorld* World, const FVector& Location, float Radius, const AActor* Source);
+	static void ReportNoise(UWorld* World, const FVector& Location, float Radius, const AActor* Source, bool bCountForDirector = true);
+
+	/** Server only. Someone is talking inside a hiding spot. If it is listening this close, it pulls them out */
+	void HearVoiceFromHiding(AFacilityCharacter* Talker, class AFacilityHidingSpot* Spot, float Range);
 
 	UFUNCTION(BlueprintPure, Category="Tenant")
 	ETenantState GetTenantState() const { return State; }

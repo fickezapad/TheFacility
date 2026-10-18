@@ -3,6 +3,7 @@
 #include "Facility/FacilityTenant.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDirector.h"
+#include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityTenantAIController.h"
 #include "Animation/AnimInstance.h"
@@ -138,7 +139,7 @@ void AFacilityTenant::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void AFacilityTenant::ReportNoise(UWorld* World, const FVector& Location, float Radius, const AActor* Source)
+void AFacilityTenant::ReportNoise(UWorld* World, const FVector& Location, float Radius, const AActor* Source, bool bCountForDirector)
 {
 	if (!World || World->GetNetMode() == NM_Client || Radius <= 0.0f)
 	{
@@ -146,7 +147,7 @@ void AFacilityTenant::ReportNoise(UWorld* World, const FVector& Location, float 
 	}
 
 	// the Facility hears everything the Tenant could, and keeps count; its own pointing doesn't count
-	if (AFacilityDirector* Director = AFacilityDirector::Get(World); Director && Source != Director)
+	if (AFacilityDirector* Director = AFacilityDirector::Get(World); Director && bCountForDirector && Source != Director)
 	{
 		Director->HearNoise(Radius);
 	}
@@ -234,6 +235,23 @@ void AFacilityTenant::Wake(float Delay, const FString& Reason)
 	UE_LOG(LogTheFacility, Log, TEXT("The Tenant wakes: %s. Comes out in %.1f s"), *Reason, Delay);
 	SetTenantState(ETenantState::Manifesting);
 	GetWorldTimerManager().SetTimer(StateTimer, this, &AFacilityTenant::Appear, FMath::Max(Delay, 0.01f), false);
+}
+
+void AFacilityTenant::HearVoiceFromHiding(AFacilityCharacter* Talker, AFacilityHidingSpot* Spot, float Range)
+{
+	if (!HasAuthority() || !Talker || !Spot || !IsPresent() || IsSated() || State == ETenantState::Breaking)
+	{
+		return;
+	}
+
+	if (FVector::Dist2D(GetActorLocation(), Spot->GetSpotPoint(60.0f, 100.0f)) > Range)
+	{
+		return;
+	}
+
+	UE_LOG(LogTheFacility, Log, TEXT("The Tenant hears a voice inside %s and pulls %s out"), *Spot->GetName(), *GetNameSafe(Talker));
+	Spot->Evict(TEXT("heard talking by the Tenant"));
+	CatchPlayer(Talker);
 }
 
 void AFacilityTenant::WakeNow(const FString& Reason)

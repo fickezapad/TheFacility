@@ -35,6 +35,9 @@ private:
 
 	TSharedPtr<SEditableTextBox> AddressBox;
 
+	/** Voice mode, sensitivity, noise gate and a live microphone meter */
+	TSharedRef<SWidget> MakeVoiceSection();
+
 	FReply OnHost();
 
 	FReply OnJoin();

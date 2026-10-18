@@ -2,6 +2,13 @@
 
 #include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityMenuWidgets.h"
+#include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityVoiceComponent.h"
+#include "HAL/IConsoleManager.h"
+#include "Interfaces/VoiceCapture.h"
+#include "VoiceModule.h"
+#include "Interfaces/VoiceInterface.h"
+#include "OnlineSubsystemUtils.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/NetDriver.h"
@@ -285,11 +292,14 @@ void UFacilityGameInstance::ShowMainMenu(APlayerController* PlayerController)
 		.PlayerName(GetPlayerName())
 		.Address(LastAddress)
 		.Message(ConsumeMenuMessage());
+	ProbeMicrophone();
 	AddMenuWidget(PlayerController, MainMenu.ToSharedRef(), 10);
+	SetMeterActive(true);
 }
 
 void UFacilityGameInstance::HideMainMenu()
 {
+	SetMeterActive(false);
 	RemoveMenuWidget(MainMenu);
 }
 
@@ -325,4 +335,174 @@ void UFacilityGameInstance::HidePauseMenu()
 		PlayerController->SetInputMode(FInputModeGameOnly());
 		PlayerController->SetShowMouseCursor(false);
 	}
+}
+
+void UFacilityGameInstance::SetVoiceMode(uint8 Mode)
+{
+	VoiceMode = FMath::Min<uint8>(Mode, 2);
+	SaveConfig();
+}
+
+void UFacilityGameInstance::SetMicSensitivity(float Gain)
+{
+	MicSensitivity = FMath::Clamp(Gain, 0.25f, 4.0f);
+	SaveConfig();
+}
+
+void UFacilityGameInstance::SetNoiseGate(float Threshold)
+{
+	NoiseGate = FMath::Clamp(Threshold, 0.0f, 0.3f);
+	SaveConfig();
+}
+
+void UFacilityGameInstance::ApplyVoiceSettings(APlayerController* PlayerController)
+{
+	ProbeMicrophone();
+
+	// the engine's own capture reads these each time it gathers microphone audio
+	if (IConsoleVariable* Gain = IConsoleManager::Get().FindConsoleVariable(TEXT("voice.MicInputGain")))
+	{
+		Gain->Set(MicSensitivity, ECVF_SetByGameSetting);
+	}
+	if (IConsoleVariable* Gate = IConsoleManager::Get().FindConsoleVariable(TEXT("voice.MicNoiseGateThreshold")))
+	{
+		Gate->Set(NoiseGate, ECVF_SetByGameSetting);
+	}
+
+	if (!PlayerController || !PlayerController->IsLocalController())
+	{
+		return;
+	}
+
+	// joining by IP there is no online session to register talkers, so the local player is registered here
+	if (bMicrophoneFound)
+	{
+		IOnlineVoicePtr Voice = Online::GetVoiceInterface(GetWorld());
+		if (Voice.IsValid())
+		{
+			Voice->RegisterLocalTalker(0);
+		}
+	}
+
+	if (VoiceMode == static_cast<uint8>(EFacilityVoiceMode::OpenMic) && bMicrophoneFound)
+	{
+		PlayerController->StartTalking();
+	}
+	else
+	{
+		PlayerController->StopTalking();
+	}
+
+	if (const AFacilityCharacter* Character = Cast<AFacilityCharacter>(PlayerController->GetPawn()))
+	{
+		if (UFacilityVoiceComponent* Voice = Character->GetVoice())
+		{
+			Voice->Server_SetVoiceState(static_cast<EFacilityVoiceMode>(VoiceMode), bMicrophoneFound);
+		}
+	}
+	UE_LOG(LogTheFacility, Log, TEXT("Voice: %s, gain %.2f, gate %.2f, microphone %s"),
+		*StaticEnum<EFacilityVoiceMode>()->GetNameStringByValue(VoiceMode), MicSensitivity, NoiseGate, bMicrophoneFound ? TEXT("found") : TEXT("not found"));
+}
+
+void UFacilityGameInstance::SetTalkKeyHeld(APlayerController* PlayerController, bool bHeld)
+{
+	if (!PlayerController || VoiceMode != static_cast<uint8>(EFacilityVoiceMode::PushToTalk) || !bMicrophoneFound)
+	{
+		return;
+	}
+
+	if (bHeld)
+	{
+		PlayerController->StartTalking();
+	}
+	else
+	{
+		PlayerController->StopTalking();
+	}
+}
+
+void UFacilityGameInstance::ProbeMicrophone()
+{
+	if (bMicrophoneProbed || IsDedicatedServerInstance())
+	{
+		return;
+	}
+
+	// is there a microphone at all? Opening a capture once answers it. Not in Init: the Voice module isn't up yet there
+	bMicrophoneProbed = true;
+	FModuleManager::Get().LoadModule(TEXT("Voice"));
+	const bool bWasActive = MeterCapture.IsValid();
+	SetMeterActive(true);
+	if (!bWasActive)
+	{
+		SetMeterActive(false);
+	}
+	UE_LOG(LogTheFacility, Log, TEXT("Voice: microphone %s"), bMicrophoneFound ? TEXT("found") : TEXT("not found: voice off, breathing on"));
+}
+
+void UFacilityGameInstance::SetMeterActive(bool bActive)
+{
+	if (!bActive)
+	{
+		if (MeterCapture.IsValid())
+		{
+			MeterCapture->Shutdown();
+			MeterCapture.Reset();
+		}
+		return;
+	}
+
+	if (!MeterCapture.IsValid() && FVoiceModule::IsAvailable())
+	{
+		MeterCapture = FVoiceModule::Get().CreateVoiceCapture(FString());
+		const bool bCreated = MeterCapture.IsValid();
+		if (MeterCapture.IsValid() && !MeterCapture->Start())
+		{
+			MeterCapture.Reset();
+		}
+		bMicrophoneFound = MeterCapture.IsValid();
+		UE_LOG(LogTheFacility, Verbose, TEXT("Voice: capture %s (voice module %s)"), bCreated ? (bMicrophoneFound ? TEXT("started") : TEXT("created but would not start")) : TEXT("not created"),
+			FVoiceModule::Get().IsVoiceEnabled() ? TEXT("enabled") : TEXT("disabled"));
+	}
+}
+
+float UFacilityGameInstance::GetMicLevel()
+{
+	if (!MeterCapture.IsValid())
+	{
+		return 0.0f;
+	}
+
+	// the amplitude follows what has been read, so drain what the device has gathered
+	uint32 Available = 0;
+	if (MeterCapture->GetCaptureState(Available) == EVoiceCaptureState::Ok && Available > 0)
+	{
+		TArray<uint8> Buffer;
+		Buffer.SetNumUninitialized(Available);
+		uint32 Read = 0;
+		MeterCapture->GetVoiceData(Buffer.GetData(), Available, Read);
+	}
+	return FMath::Clamp(MeterCapture->GetCurrentAmplitude(), 0.0f, 1.0f);
+}
+
+FString UFacilityGameInstance::ReadMicSamples(TArray<int16>& OutSamples)
+{
+	OutSamples.Reset();
+	SetMeterActive(true);
+	if (!MeterCapture.IsValid())
+	{
+		return TEXT("NoCapture");
+	}
+
+	uint32 Available = 0;
+	const EVoiceCaptureState::Type State = MeterCapture->GetCaptureState(Available);
+	if (State == EVoiceCaptureState::Ok && Available > 0)
+	{
+		TArray<uint8> Buffer;
+		Buffer.SetNumUninitialized(Available);
+		uint32 Read = 0;
+		MeterCapture->GetVoiceData(Buffer.GetData(), Available, Read);
+		OutSamples.Append(reinterpret_cast<const int16*>(Buffer.GetData()), Read / sizeof(int16));
+	}
+	return EVoiceCaptureState::ToString(State);
 }

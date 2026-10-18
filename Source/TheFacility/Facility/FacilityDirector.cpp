@@ -106,6 +106,18 @@ void AFacilityDirector::HearNoise(float Radius)
 	Attention += Amount;
 }
 
+void AFacilityDirector::HearVoice(float Radius)
+{
+	if (!HasAuthority() || bShutDown || VoiceBudget <= 0.0f)
+	{
+		return;
+	}
+
+	const float Amount = FMath::Min(Radius / 1000.0f * VoiceAttentionPer1000cm, VoiceBudget);
+	VoiceBudget -= Amount;
+	Attention += Amount;
+}
+
 void AFacilityDirector::AddAttention(float Amount, const FString& Why)
 {
 	if (!HasAuthority() || bShutDown)
@@ -135,6 +147,7 @@ void AFacilityDirector::Think()
 
 	Attention += AttentionPerMinute / 60.0f * ThinkInterval;
 	NoiseBudget = FMath::Min(NoiseBudget + NoiseAttentionPerSecondCap * ThinkInterval, NoiseAttentionPerSecondCap);
+	VoiceBudget = FMath::Min(VoiceBudget + VoiceAttentionPerSecondCap * ThinkInterval, VoiceAttentionPerSecondCap);
 	if (Tier >= Thresholds.Num() && Thresholds.Num() > 0)
 	{
 		RecurringIn -= ThinkInterval;

@@ -47,6 +47,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Director|Attention", meta=(ClampMin=0))
 	float NoiseAttentionPerSecondCap = 1.5f;
 
+	/** Attention voice adds per 1000 cm it carries: less than other noise, it is the crew talking to each other */
+	UPROPERTY(EditAnywhere, Category="Director|Attention", meta=(ClampMin=0))
+	float VoiceAttentionPer1000cm = 0.15f;
+
+	/** Voice can't add more than this per second, on its own budget */
+	UPROPERTY(EditAnywhere, Category="Director|Attention", meta=(ClampMin=0))
+	float VoiceAttentionPerSecondCap = 0.3f;
+
 	/** Attention that simply builds up while the night goes on */
 	UPROPERTY(EditAnywhere, Category="Director|Attention", meta=(ClampMin=0))
 	float AttentionPerMinute = 6.0f;
@@ -93,6 +101,9 @@ protected:
 	/** Server: noise attention left for this second */
 	float NoiseBudget = 0.0f;
 
+	/** Server: voice attention left for this second */
+	float VoiceBudget = 0.0f;
+
 	/** Server: time until the next recurring answer, once past the last threshold */
 	float RecurringIn = 0.0f;
 
@@ -126,6 +137,9 @@ public:
 
 	/** Server only. A sound was made; louder sounds draw more attention, up to a cap per second */
 	void HearNoise(float Radius);
+
+	/** Server only. Someone is talking; counted on a smaller budget than other noise */
+	void HearVoice(float Radius);
 
 	/** Server only. QA and scripted events */
 	void AddAttention(float Amount, const FString& Why);

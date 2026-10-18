@@ -2,6 +2,7 @@
 
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDoor.h"
+#include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityGameMode.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityHidingSpot.h"
@@ -10,6 +11,7 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityVoiceComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraTypes.h"
@@ -60,6 +62,7 @@ AFacilityCharacter::AFacilityCharacter(const FObjectInitializer& ObjectInitializ
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UFacilityMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	InteractionComponent = CreateDefaultSubobject<UFacilityInteractionComponent>(TEXT("Interaction"));
+	Voice = CreateDefaultSubobject<UFacilityVoiceComponent>(TEXT("Voice"));
 
 	// so teammates can aim at a downed player to help them up
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
@@ -148,12 +151,19 @@ void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	}
 
 	SetupRunInput(EnhancedInputComponent, Subsystem);
+
+	// the local player's voice: open mic or not, gain and gate, and the server learns who can't be heard
+	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	{
+		GameInstance->ApplyVoiceSettings(Cast<APlayerController>(GetController()));
+	}
 }
 
 void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputComponent, UEnhancedInputLocalPlayerSubsystem* Subsystem)
 {
 	SprintAction = NewObject<UInputAction>(this, TEXT("IA_Sprint_Default"));
 	SneakAction = NewObject<UInputAction>(this, TEXT("IA_Sneak_Default"));
+	TalkAction = NewObject<UInputAction>(this, TEXT("IA_Talk_Default"));
 	FlashlightAction = NewObject<UInputAction>(this, TEXT("IA_Flashlight_Default"));
 	UseItemAction = NewObject<UInputAction>(this, TEXT("IA_UseItem_Default"));
 	RestartAction = NewObject<UInputAction>(this, TEXT("IA_Restart_Default"));
@@ -164,6 +174,8 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 	RunMappingContext->MapKey(SneakAction, EKeys::LeftControl);
 	RunMappingContext->MapKey(SneakAction, EKeys::C);
 	RunMappingContext->MapKey(SneakAction, EKeys::Gamepad_FaceButton_Right);
+	RunMappingContext->MapKey(TalkAction, EKeys::V);
+	RunMappingContext->MapKey(TalkAction, EKeys::Gamepad_LeftShoulder);
 	RunMappingContext->MapKey(FlashlightAction, EKeys::F);
 	RunMappingContext->MapKey(FlashlightAction, EKeys::Gamepad_DPad_Up);
 	RunMappingContext->MapKey(UseItemAction, EKeys::LeftMouseButton);
@@ -181,6 +193,8 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoSprintEnd);
 		EnhancedInputComponent->BindAction(SneakAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoSneakStart);
 		EnhancedInputComponent->BindAction(SneakAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoSneakEnd);
+		EnhancedInputComponent->BindAction(TalkAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoTalkStart);
+		EnhancedInputComponent->BindAction(TalkAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoTalkEnd);
 		EnhancedInputComponent->BindAction(FlashlightAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoToggleFlashlight);
 		EnhancedInputComponent->BindAction(UseItemAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoUseItem);
 		EnhancedInputComponent->BindAction(RestartAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoRestart);
@@ -330,6 +344,22 @@ void AFacilityCharacter::DoSneakEnd()
 	if (UFacilityMovementComponent* Movement = GetFacilityMovement())
 	{
 		Movement->SetWantsToSneak(false);
+	}
+}
+
+void AFacilityCharacter::DoTalkStart()
+{
+	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	{
+		GameInstance->SetTalkKeyHeld(Cast<APlayerController>(GetController()), true);
+	}
+}
+
+void AFacilityCharacter::DoTalkEnd()
+{
+	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	{
+		GameInstance->SetTalkKeyHeld(Cast<APlayerController>(GetController()), false);
 	}
 }
 
@@ -742,6 +772,20 @@ void AFacilityCharacter::Retain()
 	DropHeldItems();
 	ApplyLifeState();
 	SpectateNext();
+
+	// the taken talk only among themselves: the server stops passing their voice to anyone still in the run
+	if (const APlayerState* Mine = GetPlayerState(); Mine && Mine->GetUniqueId().IsValid())
+	{
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			APlayerController* Listener = It->Get();
+			const AFacilityCharacter* ListenerPawn = Listener ? Cast<AFacilityCharacter>(Listener->GetPawn()) : nullptr;
+			if (Listener && Listener != GetController() && ListenerPawn && !ListenerPawn->IsRetained())
+			{
+				Listener->GameplayMutePlayer(Mine->GetUniqueId());
+			}
+		}
+	}
 
 	// anyone who was watching this player moves on to someone still here
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)

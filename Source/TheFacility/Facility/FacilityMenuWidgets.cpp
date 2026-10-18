@@ -5,6 +5,8 @@
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SSlider.h"
+#include "Widgets/Notifications/SProgressBar.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SBoxPanel.h"
@@ -65,7 +67,7 @@ void SFacilityMainMenu::Construct(const FArguments& InArgs)
 	GameInstance = InArgs._GameInstance;
 
 	const FText Controls = LOCTEXT("Controls",
-		"WASD move   Shift sprint   Ctrl sneak   E interact   F flashlight   LMB use item   Esc menu");
+		"WASD move   Shift sprint   Ctrl sneak   E interact   F flashlight   LMB use item   V push-to-talk   Esc menu");
 
 	TSharedRef<SVerticalBox> Column = SNew(SVerticalBox)
 		+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
@@ -111,6 +113,10 @@ void SFacilityMainMenu::Construct(const FArguments& InArgs)
 		[
 			Button(LOCTEXT("Join", "JOIN"), FOnClicked::CreateSP(this, &SFacilityMainMenu::OnJoin))
 		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 22)
+		[
+			MakeVoiceSection()
+		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 18)
 		[
 			Button(LOCTEXT("Quit", "QUIT"), FOnClicked::CreateSP(this, &SFacilityMainMenu::OnQuit))
@@ -131,6 +137,106 @@ void SFacilityMainMenu::Construct(const FArguments& InArgs)
 		];
 
 	ChildSlot[Screen(1.0f, Column)];
+}
+
+TSharedRef<SWidget> SFacilityMainMenu::MakeVoiceSection()
+{
+	const TWeakObjectPtr<UFacilityGameInstance> Weak = GameInstance;
+
+	// one button per mode; the chosen one is lit
+	const auto ModeButton = [Weak](const FText& Text, uint8 Mode)
+	{
+		return SNew(SBox).HeightOverride(34.0f)
+			[
+				SNew(SButton)
+				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
+				.ButtonColorAndOpacity_Lambda([Weak, Mode]()
+				{
+					const bool bChosen = Weak.IsValid() && Weak->GetVoiceModeIndex() == Mode;
+					return bChosen ? FLinearColor(0.35f, 0.32f, 0.26f) : FLinearColor(0.12f, 0.12f, 0.11f);
+				})
+				.OnClicked_Lambda([Weak, Mode]()
+				{
+					if (UFacilityGameInstance* Instance = Weak.Get())
+					{
+						Instance->SetVoiceMode(Mode);
+					}
+					return FReply::Handled();
+				})
+				[
+					SNew(STextBlock).Text(Text).Font(Font(10, TEXT("Bold"))).ColorAndOpacity(Paper)
+				]
+			];
+	};
+
+	const auto Slider = [](const FText& Label, TFunction<float()> Get, TFunction<void(float)> Set)
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center)
+			[
+				FacilityMenuStyle::Label(Label, 10)
+			]
+			+ SHorizontalBox::Slot().FillWidth(0.58f).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([Get]() { return Get(); })
+				.OnValueChanged_Lambda([Set](float Value) { Set(Value); })
+			];
+	};
+
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+		[
+			Label(LOCTEXT("VoiceLabel", "Voice: the Tenant hears it too"))
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0, 0, 4, 0)[ModeButton(LOCTEXT("OpenMic", "OPEN MIC"), 0)]
+			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(2, 0, 2, 0)[ModeButton(LOCTEXT("PushToTalk", "PUSH TO TALK"), 1)]
+			+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(4, 0, 0, 0)[ModeButton(LOCTEXT("VoiceOff", "OFF"), 2)]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+		[
+			Slider(LOCTEXT("Sensitivity", "Sensitivity"),
+				[Weak]() { return Weak.IsValid() ? (Weak->GetMicSensitivity() - 0.25f) / 3.75f : 0.2f; },
+				[Weak](float Value) { if (Weak.IsValid()) { Weak->SetMicSensitivity(0.25f + Value * 3.75f); } })
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
+		[
+			Slider(LOCTEXT("NoiseGate", "Noise gate"),
+				[Weak]() { return Weak.IsValid() ? Weak->GetNoiseGate() / 0.3f : 0.13f; },
+				[Weak](float Value) { if (Weak.IsValid()) { Weak->SetNoiseGate(Value * 0.3f); } })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(0.42f).VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Font(Font(10))
+				.ColorAndOpacity(Dim)
+				.Text_Lambda([Weak]()
+				{
+					return Weak.IsValid() && !Weak->HasMicrophone() ? LOCTEXT("NoMic", "No microphone") : LOCTEXT("MicLevel", "Microphone");
+				})
+			]
+			+ SHorizontalBox::Slot().FillWidth(0.58f).VAlign(VAlign_Center)
+			[
+				SNew(SBox).HeightOverride(10.0f)
+				[
+					SNew(SProgressBar)
+					.FillColorAndOpacity_Lambda([Weak]()
+					{
+						// red while the noise gate holds it back, paper once it would be sent
+						const bool bOpen = Weak.IsValid() && Weak->GetMicLevel() >= Weak->GetNoiseGate();
+						return bOpen ? FLinearColor(0.82f, 0.80f, 0.74f) : FLinearColor(0.6f, 0.25f, 0.22f);
+					})
+					.Percent_Lambda([Weak]() { return Weak.IsValid() ? TOptional<float>(Weak->GetMicLevel()) : TOptional<float>(0.0f); })
+				]
+			]
+		];
 }
 
 FReply SFacilityMainMenu::OnHost()

@@ -18,6 +18,7 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityVoiceComponent.h"
 #include "Camera/CameraActor.h"
 #include "Containers/Ticker.h"
 #include "NavigationPath.h"
@@ -86,6 +87,9 @@ namespace FacilityQA
 
 	/** 1 if the last check or probe passed, 0 if not. Scripts poll it through facility.QA.Probe to wait for something */
 	static TAutoConsoleVariable<int32> CVarLastResult(TEXT("facility.QA.LastResult"), 0, TEXT("QA: 1 if the last facility.QA.Expect or Probe passed"));
+
+	/** Attention remembered by facility.QA.MarkAttention */
+	static int32 MarkedAttention = 0;
 
 	/** Probes check without logging */
 	static bool bQuiet = false;
@@ -328,6 +332,54 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAPlaceCreature(
 		}
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs CmdQAVoice(
+	TEXT("facility.QA.Voice"),
+	TEXT("QA, host: a TEST SIGNAL standing in for a microphone: the server treats the player as speaking at Amplitude (0..1). facility.QA.Voice <Player> <Amplitude> <Seconds>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Voice")) && Args.Num() >= 3 ? GetPlayer(World, ArgInt(Args, 0, 0)) : nullptr;
+		if (Player && Player->GetVoice())
+		{
+			UE_LOG(LogTheFacility, Display, TEXT("facility.QA.Voice: test signal for %s at %.2f for %.1f s (carries %.0f cm)"), *Player->GetName(), ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), Player->GetVoice()->RadiusForAmplitude(ArgFloat(Args, 1, 0.0f)));
+			Player->GetVoice()->ForceAmplitude(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f));
+		}
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQAVoiceState(
+	TEXT("facility.QA.VoiceState"),
+	TEXT("QA, host: sets a player's voice mode as if their client reported it. facility.QA.VoiceState <Player> <0 open|1 push-to-talk|2 off> <Microphone 0|1>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.VoiceState")) && Args.Num() >= 3 ? GetPlayer(World, ArgInt(Args, 0, 0)) : nullptr;
+		if (Player && Player->GetVoice())
+		{
+			Player->GetVoice()->ForceVoiceState(static_cast<EFacilityVoiceMode>(FMath::Clamp(ArgInt(Args, 1, 0), 0, 2)), ArgInt(Args, 2, 1) != 0);
+		}
+	}));
+
+static FAutoConsoleCommandWithWorld CmdQAMarkAttention(
+	TEXT("facility.QA.MarkAttention"),
+	TEXT("QA, host: remembers the Facility's attention now, for Expect AttentionGainAtMost / AttentionGainAtLeast"),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	{
+		if (const AFacilityDirector* Director = IsHost(World, TEXT("facility.QA.MarkAttention")) ? AFacilityDirector::Get(World) : nullptr)
+		{
+			MarkedAttention = Director->GetAttention();
+			UE_LOG(LogTheFacility, Display, TEXT("facility.QA.MarkAttention: %d"), MarkedAttention);
+		}
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQARetain(
+	TEXT("facility.QA.Retain"),
+	TEXT("QA, host: the Facility takes a player for the rest of the run. facility.QA.Retain <Player>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Retain")) ? GetPlayer(World, ArgInt(Args, 0, 0)) : nullptr)
+		{
+			Player->Retain();
+		}
+	}));
+
 static FAutoConsoleCommandWithWorldAndArgs CmdQAUnhide(
 	TEXT("facility.QA.Unhide"),
 	TEXT("QA, host: a hidden player asks to come out, as if they pressed interact. facility.QA.Unhide <Player>"),
@@ -375,6 +427,26 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
 			const float Z = Player ? Player->GetActorLocation().Z : -1.0e9f;
 			Check(Line, TEXT("1"), Z >= ArgFloat(Args, 2, 0.0f) && Z <= ArgFloat(Args, 3, 0.0f) ? TEXT("1") : FString::Printf(TEXT("0 (z %.0f)"), Z));
+		}
+		else if ((What == TEXT("VoiceHeard") || What == TEXT("Breathing")) && Args.Num() >= 3)
+		{
+			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
+			const UFacilityVoiceComponent* Voice = Player ? Player->GetVoice() : nullptr;
+			const int32 Count = !Voice ? -1 : What == TEXT("VoiceHeard") ? Voice->GetNumVoiceReports() : Voice->GetNumBreaths();
+			Check(Line, Args[2], Count > 0 ? TEXT("1") : FString::Printf(TEXT("0 (%d)"), Count));
+		}
+		else if ((What == TEXT("AttentionGainAtMost") || What == TEXT("AttentionGainAtLeast")) && Args.Num() >= 2)
+		{
+			const AFacilityDirector* Director = AFacilityDirector::Get(World);
+			const int32 Gain = Director ? Director->GetAttention() - MarkedAttention : -999;
+			const bool bOk = Director && (What == TEXT("AttentionGainAtMost") ? Gain <= ArgInt(Args, 1, 0) : Gain >= ArgInt(Args, 1, 0));
+			Check(Line, TEXT("1"), bOk ? TEXT("1") : FString::Printf(TEXT("0 (gained %d)"), Gain));
+		}
+		else if (What == TEXT("AttentionAtMost") && Args.Num() >= 2)
+		{
+			const AFacilityDirector* Director = AFacilityDirector::Get(World);
+			const int32 Attention = Director ? Director->GetAttention() : -1;
+			Check(Line, TEXT("1"), Director && Attention <= ArgInt(Args, 1, 0) ? TEXT("1") : FString::Printf(TEXT("0 (%d)"), Attention));
 		}
 		else if (What == TEXT("Hiding") && Args.Num() >= 3)
 		{

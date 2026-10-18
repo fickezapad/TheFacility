@@ -22,7 +22,7 @@ public class TheFacility : ModuleRules
 			"Slate"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "OnlineSubsystem", "OnlineSubsystemUtils", "Voice", "SignalProcessing", "AudioCapture", "AudioCaptureCore" });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"TheFacility",

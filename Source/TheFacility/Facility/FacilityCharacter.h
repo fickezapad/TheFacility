@@ -10,6 +10,7 @@
 class AFacilityDoor;
 class AFacilityHidingSpot;
 class UFacilityInteractionComponent;
+class UFacilityVoiceComponent;
 class UFacilityMovementComponent;
 class UInputAction;
 class UInputMappingContext;
@@ -49,6 +50,10 @@ class THEFACILITY_API AFacilityCharacter : public ATheFacilityCharacter, public 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<class UPointLightComponent> DarkAdaptLight;
 
+	/** This player's voice: where others hear it from, and what the Tenant hears */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<class UFacilityVoiceComponent> Voice;
+
 public:
 
 	/** Item id of the flash camera */
@@ -73,6 +78,9 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> SneakAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> TalkAction;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> FlashlightAction;
@@ -187,6 +195,8 @@ public:
 
 	UFacilityInteractionComponent* GetInteractionComponent() const { return InteractionComponent; }
 
+	UFacilityVoiceComponent* GetVoice() const { return Voice; }
+
 	UFacilityMovementComponent* GetFacilityMovement() const;
 
 	UFUNCTION(BlueprintPure, Category="Facility")
@@ -280,6 +290,8 @@ protected:
 	void DoSprintEnd();
 	void DoSneakStart();
 	void DoSneakEnd();
+	void DoTalkStart();
+	void DoTalkEnd();
 	void DoToggleFlashlight();
 	void DoUseItem();
 	void DoRestart();

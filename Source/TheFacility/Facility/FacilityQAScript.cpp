@@ -18,6 +18,9 @@
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityVoiceComponent.h"
+#include "Interfaces/VoiceInterface.h"
+#include "OnlineSubsystemUtils.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -26,6 +29,7 @@
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/FileHelper.h"
+#include "AudioCaptureCore.h"
 #include "UnrealClient.h"
 #include "Misc/Paths.h"
 #include "TheFacility.h"
@@ -220,6 +224,109 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAMenu(
 		}
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs CmdQAMicSample(
+	TEXT("facility.QA.MicSample"),
+	TEXT("QA: reads the raw microphone for Seconds and logs each second's peak and average level (0..1). facility.QA.MicSample <Seconds>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		TWeakObjectPtr<UFacilityGameInstance> Instance = World ? World->GetGameInstance<UFacilityGameInstance>() : nullptr;
+		if (!Instance.IsValid())
+		{
+			return;
+		}
+
+		struct FWindow { double Start = 0.0; double Next = 0.0; double End = 0.0; float Peak = 0.0f; double Sum = 0.0; int64 Count = 0; FString State; };
+		TSharedRef<FWindow> Window = MakeShared<FWindow>();
+		Window->Start = FPlatformTime::Seconds();
+		Window->Next = Window->Start + 1.0;
+		Window->End = Window->Start + (Args.IsEmpty() ? 10.0 : FCString::Atof(*Args[0]));
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Instance, Window](float)
+		{
+			if (!Instance.IsValid())
+			{
+				return false;
+			}
+			TArray<int16> Samples;
+			Window->State = Instance->ReadMicSamples(Samples);
+			for (const int16 Sample : Samples)
+			{
+				const float Level = FMath::Abs(Sample) / 32768.0f;
+				Window->Peak = FMath::Max(Window->Peak, Level);
+				Window->Sum += Level;
+				++Window->Count;
+			}
+			const double Now = FPlatformTime::Seconds();
+			if (Now >= Window->Next)
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_MIC t=%3.0f peak=%.4f avg=%.4f samples=%lld state=%s"), Now - Window->Start, Window->Peak,
+					Window->Count > 0 ? Window->Sum / Window->Count : 0.0, Window->Count, *Window->State);
+				Window->Next += 1.0;
+				Window->Peak = 0.0f;
+				Window->Sum = 0.0;
+				Window->Count = 0;
+			}
+			return Now < Window->End;
+		}));
+	}));
+
+static FAutoConsoleCommand CmdQAWasapiSample(
+	TEXT("facility.QA.WasapiSample"),
+	TEXT("QA: reads the default microphone through the engine's WASAPI capture (not the voice path) for Seconds, logging each second's peak. facility.QA.WasapiSample <Seconds>"),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		struct FProbe
+		{
+			Audio::FAudioCapture Capture;
+			FCriticalSection Lock;
+			float Peak = 0.0f;
+			int64 Frames = 0;
+			double Start = 0.0, Next = 0.0, End = 0.0;
+		};
+		TSharedRef<FProbe> Probe = MakeShared<FProbe>();
+		Audio::FCaptureDeviceInfo Info;
+		const bool bInfo = Probe->Capture.GetCaptureDeviceInfo(Info);
+		Audio::FAudioCaptureDeviceParams Params;
+		TWeakPtr<FProbe> Weak = Probe;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		const bool bOpen = Probe->Capture.OpenCaptureStream(Params, [Weak](const float* Audio, int32 NumFrames, int32 NumChannels, int32, double, bool)
+		{
+			if (TSharedPtr<FProbe> Pinned = Weak.Pin())
+			{
+				FScopeLock ScopeLock(&Pinned->Lock);
+				for (int32 Index = 0; Index < NumFrames * NumChannels; ++Index)
+				{
+					Pinned->Peak = FMath::Max(Pinned->Peak, FMath::Abs(Audio[Index]));
+				}
+				Pinned->Frames += NumFrames;
+			}
+		}, 1024);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		const bool bStarted = bOpen && Probe->Capture.StartStream();
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_WASAPI device=%s rate=%d channels=%d open=%d started=%d"), bInfo ? *Info.DeviceName : TEXT("?"), bInfo ? Info.PreferredSampleRate : 0, bInfo ? Info.InputChannels : 0, bOpen, bStarted);
+		Probe->Start = FPlatformTime::Seconds();
+		Probe->Next = Probe->Start + 1.0;
+		Probe->End = Probe->Start + (Args.IsEmpty() ? 10.0 : FCString::Atof(*Args[0]));
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Probe](float)
+		{
+			const double Now = FPlatformTime::Seconds();
+			if (Now >= Probe->Next)
+			{
+				FScopeLock ScopeLock(&Probe->Lock);
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_WASAPI t=%3.0f peak=%.4f frames=%lld"), Now - Probe->Start, Probe->Peak, Probe->Frames);
+				Probe->Peak = 0.0f;
+				Probe->Frames = 0;
+				Probe->Next += 1.0;
+			}
+			if (Now < Probe->End)
+			{
+				return true;
+			}
+			Probe->Capture.StopStream();
+			Probe->Capture.CloseStream();
+			return false;
+		}));
+	}));
+
 static FAutoConsoleCommandWithWorld CmdQAObserve(
 	TEXT("facility.QA.Observe"),
 	TEXT("QA, any machine: logs what this machine sees of the run, the local player, the creatures and the doors"),
@@ -255,6 +362,22 @@ static FAutoConsoleCommandWithWorld CmdQAObserve(
 		{
 			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s player %s body_hidden=%d hiding=%d at %s"), Machine,
 				It->GetPlayerState() ? *It->GetPlayerState()->GetPlayerName() : *It->GetName(), It->IsHidden() || (It->GetMesh() && It->GetMesh()->bHiddenInGame), It->IsHiding(), *It->GetActorLocation().ToCompactString());
+			if (const UFacilityVoiceComponent* Voice = It->GetVoice())
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s voice %s mode=%s mic=%d talker_here=%d server_muted_for_me=%d retained=%d amplitude_on_server=%.3f voice_reports=%d"), Machine,
+					It->GetPlayerState() ? *It->GetPlayerState()->GetPlayerName() : *It->GetName(), *StaticEnum<EFacilityVoiceMode>()->GetNameStringByValue((int64)Voice->GetVoiceMode()),
+					Voice->HasMicrophone(), Voice->HasTalker(), PC && It->GetPlayerState() && It->GetPlayerState()->GetUniqueId().IsValid() && const_cast<APlayerController*>(PC)->IsPlayerMuted(*It->GetPlayerState()->GetUniqueId().GetUniqueNetId()), It->IsRetained(), Voice->GetLastAmplitude(), Voice->GetNumVoiceReports());
+			}
+		}
+		if (IOnlineVoicePtr VoiceInterface = Online::GetVoiceInterface(World); VoiceInterface.IsValid())
+		{
+			FString DebugState = VoiceInterface->GetVoiceDebugState();
+			DebugState.ReplaceInline(TEXT("\n"), TEXT(" | "));
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s voice_engine local_talking=%d %s"), Machine, VoiceInterface->IsLocalPlayerTalking(0), *DebugState.Left(600));
+			if (UFacilityGameInstance* Instance = World->GetGameInstance<UFacilityGameInstance>())
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s mic_meter=%.4f"), Machine, Instance->GetMicLevel());
+			}
 		}
 		for (TActorIterator<AFacilityTenant> It(World); It; ++It)
 		{

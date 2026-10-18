@@ -60,6 +60,28 @@ public:
 	/** QA: where the menus are on screen, if anywhere */
 	FString DescribeMenus() const;
 
+	/** Voice: how this player uses their microphone, and how it is tuned. Saved in the user's Game.ini */
+	uint8 GetVoiceModeIndex() const { return VoiceMode; }
+	float GetMicSensitivity() const { return MicSensitivity; }
+	float GetNoiseGate() const { return NoiseGate; }
+	bool HasMicrophone() const { return bMicrophoneFound; }
+
+	void SetVoiceMode(uint8 Mode);
+	void SetMicSensitivity(float Gain);
+	void SetNoiseGate(float Threshold);
+
+	/** Applies the voice settings for the local player: engine gain and gate, open mic or not, and tells the server */
+	void ApplyVoiceSettings(APlayerController* PlayerController);
+
+	/** Push-to-talk key held or released */
+	void SetTalkKeyHeld(APlayerController* PlayerController, bool bHeld);
+
+	/** The microphone level right now, 0..1, for the menu meter. Only while the main menu is open */
+	float GetMicLevel();
+
+	/** QA: opens the menu's capture if needed and reads raw samples gathered since the last call. Returns the capture state name */
+	FString ReadMicSamples(TArray<int16>& OutSamples);
+
 	/** True on the machine hosting the current run */
 	bool IsHosting() const;
 
@@ -82,6 +104,32 @@ protected:
 
 	UPROPERTY(config)
 	FString LastAddress = TEXT("127.0.0.1");
+
+	/** 0 open mic, 1 push-to-talk, 2 off (EFacilityVoiceMode) */
+	UPROPERTY(config)
+	uint8 VoiceMode = 0;
+
+	/** Microphone input gain */
+	UPROPERTY(config)
+	float MicSensitivity = 1.0f;
+
+	/** Below this level the microphone sends nothing */
+	UPROPERTY(config)
+	float NoiseGate = 0.04f;
+
+	/** Whether a capture device could be opened at all */
+	bool bMicrophoneFound = false;
+
+	/** The menu's own capture, for the level meter */
+	TSharedPtr<class IVoiceCapture> MeterCapture;
+
+	/** Opens (or closes) the menu's capture */
+	void SetMeterActive(bool bActive);
+
+	/** Finds out once whether there is a microphone */
+	void ProbeMicrophone();
+
+	bool bMicrophoneProbed = false;
 
 	FString MenuMessage;
 
