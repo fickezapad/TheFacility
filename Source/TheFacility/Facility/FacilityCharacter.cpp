@@ -4,6 +4,7 @@
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityGameMode.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
@@ -73,6 +74,15 @@ AFacilityCharacter::AFacilityCharacter(const FObjectInitializer& ObjectInitializ
 	Flashlight->AttenuationRadius = 1600.0f;
 	Flashlight->InnerConeAngle = 12.0f;
 	Flashlight->OuterConeAngle = 28.0f;
+
+	DarkAdaptLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("DarkAdaptLight"));
+	DarkAdaptLight->SetupAttachment(GetCapsuleComponent());
+	DarkAdaptLight->SetMobility(EComponentMobility::Movable);
+	DarkAdaptLight->IntensityUnits = ELightUnits::Candelas;
+	DarkAdaptLight->Intensity = 20.0f;
+	DarkAdaptLight->AttenuationRadius = 900.0f;
+	DarkAdaptLight->SetCastShadows(false);
+	DarkAdaptLight->SetVisibility(false);
 }
 
 void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -82,6 +92,7 @@ void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME_CONDITION(AFacilityCharacter, HeldKeys, COND_OwnerOnly);
 	DOREPLIFETIME(AFacilityCharacter, bDowned);
 	DOREPLIFETIME(AFacilityCharacter, bRetained);
+	DOREPLIFETIME(AFacilityCharacter, HidingSpot);
 	DOREPLIFETIME(AFacilityCharacter, DownedDeadline);
 	DOREPLIFETIME(AFacilityCharacter, bDownedRecoversAlone);
 	// the owner switches its own light straight away and must not be overwritten by a late echo
@@ -205,6 +216,13 @@ void AFacilityCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// hidden bodies stay exactly where the spot put them, on every machine, whatever a teleport or a correction did
+	if (IsHiding() && GetCharacterMovement()->MovementMode != MOVE_None)
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+		GetCharacterMovement()->DisableMovement();
+	}
+
 	if (HasAuthority())
 	{
 		UpdateFootstepNoise(DeltaSeconds);
@@ -270,6 +288,13 @@ FText AFacilityCharacter::GetInteractKeyText() const
 
 void AFacilityCharacter::DoInteract()
 {
+	// from inside a closet or under a bed, interact means coming out
+	if (IsHiding())
+	{
+		Server_LeaveHiding();
+		return;
+	}
+
 	if (IsStanding())
 	{
 		InteractionComponent->TryInteract();
@@ -329,7 +354,7 @@ void AFacilityCharacter::Server_SetFlashlight_Implementation(bool bOn)
 
 void AFacilityCharacter::OnRep_Flashlight()
 {
-	Flashlight->SetVisibility(bFlashlightOn && !bRetained);
+	Flashlight->SetVisibility(bFlashlightOn && !bRetained && !IsHiding());
 }
 
 void AFacilityCharacter::DoUseItem()
@@ -601,6 +626,11 @@ void AFacilityCharacter::SetDowned(bool bNewDowned)
 		return;
 	}
 
+	if (bNewDowned && HidingSpot)
+	{
+		HidingSpot->Evict(TEXT("downed"));
+	}
+
 	bDowned = bNewDowned;
 	DownedTime = 0.0f;
 	DownedDeadline = 0.0;
@@ -698,6 +728,11 @@ void AFacilityCharacter::Retain()
 		return;
 	}
 
+	if (HidingSpot)
+	{
+		HidingSpot->Evict(TEXT("retained"));
+	}
+
 	GetWorldTimerManager().ClearTimer(DownedTimer);
 	bDowned = false;
 	bRetained = true;
@@ -779,6 +814,25 @@ void AFacilityCharacter::SpectateNext()
 	PC->SetViewTargetWithBlend(Candidates[(CurrentIndex + 1) % Candidates.Num()], 0.4f);
 }
 
+void AFacilityCharacter::SetHidingSpot(AFacilityHidingSpot* Spot)
+{
+	if (!HasAuthority() || HidingSpot == Spot)
+	{
+		return;
+	}
+
+	HidingSpot = Spot;
+	ApplyLifeState();
+}
+
+void AFacilityCharacter::Server_LeaveHiding_Implementation()
+{
+	if (HidingSpot)
+	{
+		HidingSpot->RequestLeave(this);
+	}
+}
+
 void AFacilityCharacter::Server_CycleSpectate_Implementation()
 {
 	if (bRetained)
@@ -794,7 +848,7 @@ void AFacilityCharacter::OnRep_LifeState()
 
 void AFacilityCharacter::ApplyLifeState()
 {
-	if (bDowned || bRetained)
+	if (bDowned || bRetained || IsHiding())
 	{
 		GetCharacterMovement()->StopMovementImmediately();
 		GetCharacterMovement()->DisableMovement();
@@ -806,8 +860,23 @@ void AFacilityCharacter::ApplyLifeState()
 
 	// a retained player is gone from the world for everyone; their camera follows a teammate
 	SetActorHiddenInGame(bRetained);
-	SetActorEnableCollision(!bRetained);
-	Flashlight->SetVisibility(bFlashlightOn && !bRetained);
+	// hidden in a closet or under a bed: the body is out of sight for everyone (meshes only: hiding the whole actor would also
+	// put out the dark-adapt light), and out of the way like a retained player
+	TInlineComponentArray<UMeshComponent*> Meshes(this);
+	for (UMeshComponent* MeshComponent : Meshes)
+	{
+		MeshComponent->SetHiddenInGame(IsHiding());
+	}
+	SetActorEnableCollision(!bRetained && !IsHiding());
+
+	// only the one hiding sees by it: every other machine leaves it off
+	const bool bAdapt = IsHiding() && IsLocallyControlled();
+	DarkAdaptLight->SetVisibility(bAdapt);
+	if (bAdapt)
+	{
+		DarkAdaptLight->SetWorldLocation(HidingSpot->GetEyeTransform().GetLocation() + HidingSpot->GetActorForwardVector() * 120.0f);
+	}
+	Flashlight->SetVisibility(bFlashlightOn && !bRetained && !IsHiding());
 
 	ApplyDownedPose();
 }
@@ -854,6 +923,19 @@ void AFacilityCharacter::ApplyDownedPose()
 void AFacilityCharacter::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
 {
 	Super::CalcCamera(DeltaTime, OutResult);
+
+	// hidden: the view is from inside the spot, looking out the way it faces, with a limited turn
+	if (HidingSpot)
+	{
+		const FTransform Eye = HidingSpot->GetEyeTransform();
+		const FRotator Facing = Eye.Rotator();
+		const FRotator Look = (GetController() ? GetController()->GetControlRotation() : GetBaseAimRotation());
+		const float Yaw = FMath::ClampAngle(FRotator::NormalizeAxis(Look.Yaw - Facing.Yaw), -70.0f, 70.0f);
+		const float Pitch = FMath::ClampAngle(FRotator::NormalizeAxis(Look.Pitch), -40.0f, 30.0f);
+		OutResult.Location = Eye.GetLocation();
+		OutResult.Rotation = FRotator(Pitch, Facing.Yaw + Yaw, 0.0f);
+		return;
+	}
 
 	if (bShowingDownedPose)
 	{

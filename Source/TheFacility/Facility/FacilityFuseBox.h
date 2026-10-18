@@ -33,8 +33,16 @@ protected:
 	int32 FusesRequired = 1;
 
 	/** Fuses fitted so far */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category="Fuse Box")
+	UPROPERTY(ReplicatedUsing=OnRep_FusesFitted, BlueprintReadOnly, Category="Fuse Box")
 	int32 FusesFitted = 0;
+
+	/** A fuse seating */
+	UPROPERTY(EditAnywhere, Category="Fuse Box|Sound")
+	TObjectPtr<class USoundBase> FitSound;
+
+	/** The last fuse: the building hums back to life */
+	UPROPERTY(EditAnywhere, Category="Fuse Box|Sound")
+	TObjectPtr<class USoundBase> PowerOnSound;
 
 	/** How far fitting a fuse that doesn't yet bring the power back carries */
 	UPROPERTY(EditAnywhere, Category="Fuse Box", meta=(ClampMin=0, Units="cm"))
@@ -60,6 +68,12 @@ public:
 	virtual void Interact_Implementation(APawn* InstigatorPawn) override;
 
 protected:
+
+	UFUNCTION()
+	void OnRep_FusesFitted();
+
+	/** Local: the fuse just fitted is heard here */
+	void PlayFitSound();
 
 	bool IsPowerRestored() const;
 

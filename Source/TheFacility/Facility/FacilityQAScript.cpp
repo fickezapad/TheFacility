@@ -10,6 +10,7 @@
 
 #if !UE_BUILD_SHIPPING
 
+#include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDirector.h"
 #include "Facility/FacilityDoor.h"
@@ -250,6 +251,11 @@ static FAutoConsoleCommandWithWorld CmdQAObserve(
 			GameState ? *StaticEnum<EFacilityRunState>()->GetNameStringByValue((int64)GameState->GetRunState()) : TEXT("-"),
 			GameState && GameState->IsPowerRestored() ? TEXT("on") : TEXT("off"), GameState ? GameState->GetLedger().Num() : 0);
 
+		for (TActorIterator<AFacilityCharacter> It(World); It; ++It)
+		{
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s player %s body_hidden=%d hiding=%d at %s"), Machine,
+				It->GetPlayerState() ? *It->GetPlayerState()->GetPlayerName() : *It->GetName(), It->IsHidden() || (It->GetMesh() && It->GetMesh()->bHiddenInGame), It->IsHiding(), *It->GetActorLocation().ToCompactString());
+		}
 		for (TActorIterator<AFacilityTenant> It(World); It; ++It)
 		{
 			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s tenant %s hidden=%d at %s"), Machine,
@@ -260,6 +266,7 @@ static FAutoConsoleCommandWithWorld CmdQAObserve(
 			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s marked %s visible_here=%d i_am_marked=%d"), Machine,
 				*StaticEnum<EMarkedState>()->GetNameStringByValue((int64)It->GetMarkedState()), It->GetMesh() && It->GetMesh()->IsVisible(), It->IsLocalPlayerMarked());
 		}
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s sounds_played=%d last=%s"), Machine, FacilityAudio::GetPlayedCount(), *FacilityAudio::GetLastPlayed());
 		if (const AFacilityDirector* Director = AFacilityDirector::Get(World))
 		{
 			float Age = 0.0f;

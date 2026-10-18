@@ -1,11 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityDoor.h"
+#include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
+#include "Sound/SoundBase.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
@@ -34,6 +36,11 @@ AFacilityDoor::AFacilityDoor()
 	DoorMesh->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
 	// navigation runs through the doorway whether the door is open or not; AI opens doors itself
 	DoorMesh->SetCanEverAffectNavigation(false);
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> CreakAsset(TEXT("/Game/Facility/Audio/S_DoorCreak.S_DoorCreak"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> SlamAsset(TEXT("/Game/Facility/Audio/S_DoorSlam.S_DoorSlam"));
+	CreakSound = CreakAsset.Object;
+	SlamSound = SlamAsset.Object;
 
 	// placeholder slab, 100cm wide and 210cm tall, swinging from its left edge
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -94,8 +101,24 @@ void AFacilityDoor::OnRep_Open()
 	StartSwing();
 }
 
+void AFacilityDoor::OnRep_Slammed()
+{
+	// a door that was already broken or held when this machine joined doesn't slam again
+	if ((bHeldShut || bBroken) && GetGameTimeSinceCreation() > 1.0f)
+	{
+		PlaySlam();
+	}
+}
+
+void AFacilityDoor::PlaySlam()
+{
+	FacilityAudio::PlayAt(this, SlamSound, GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), 3000.0f);
+}
+
 void AFacilityDoor::StartSwing()
 {
+	// each machine animates and hears its own swing
+	FacilityAudio::PlayAt(this, CreakSound, GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), 1500.0f, 0.8f, FMath::FRandRange(0.9f, 1.1f));
 	SetActorTickEnabled(true);
 }
 
@@ -146,6 +169,7 @@ void AFacilityDoor::BreakOpen(APawn* Breaker)
 	}
 
 	bBroken = true;
+	PlaySlam();
 	bLocked = false;
 	bHeldShut = false;
 	if (!bOpen)
@@ -169,6 +193,7 @@ void AFacilityDoor::HoldShut(float Duration)
 	}
 	bLocked = true;
 	bHeldShut = true;
+	PlaySlam();
 	ReportDoorNoise(SlamNoiseRadius, nullptr);
 	GetWorldTimerManager().SetTimer(HoldTimer, this, &AFacilityDoor::ReleaseHold, FMath::Max(Duration, 0.1f), false);
 }

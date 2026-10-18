@@ -8,6 +8,7 @@
 
 class AFacilityCharacter;
 class UAudioComponent;
+class USoundBase;
 struct FFacilitySignature;
 
 UENUM(BlueprintType)
@@ -53,6 +54,16 @@ class THEFACILITY_API AFacilityTenant : public ACharacter
 	TObjectPtr<UAudioComponent> CryAudio;
 
 protected:
+
+	UPROPERTY(EditAnywhere, Category="Tenant|Sound")
+	TObjectPtr<USoundBase> StepSound;
+
+	/** Beating on a locked door */
+	UPROPERTY(EditAnywhere, Category="Tenant|Sound")
+	TObjectPtr<USoundBase> KnockSound;
+
+	UPROPERTY(EditAnywhere, Category="Tenant|Sound")
+	TObjectPtr<USoundBase> CrySound;
 
 	/** Signing any of these Offerings wakes it. Matches SignatureId on a FacilityPickup */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Tenant")

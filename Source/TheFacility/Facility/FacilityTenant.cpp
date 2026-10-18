@@ -82,11 +82,22 @@ AFacilityTenant::AFacilityTenant()
 	CryAudio->AttenuationOverrides.AttenuationShapeExtents = FVector(200.0f);
 	CryAudio->AttenuationOverrides.FalloffDistance = 3000.0f;
 
-	static ConstructorHelpers::FObjectFinder<USoundBase> NoiseSound(TEXT("/Engine/EngineSounds/WhiteNoise.WhiteNoise"));
-	if (NoiseSound.Succeeded())
+	// generated sounds (Saved/QA/make_sounds.py). Heard through walls, but muffled
+	static ConstructorHelpers::FObjectFinder<USoundBase> StepAsset(TEXT("/Game/Facility/Audio/S_TenantStep.S_TenantStep"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> KnockAsset(TEXT("/Game/Facility/Audio/S_TenantKnock.S_TenantKnock"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> CryAsset(TEXT("/Game/Facility/Audio/S_TenantCry.S_TenantCry"));
+	StepSound = StepAsset.Object;
+	KnockSound = KnockAsset.Object;
+	CrySound = CryAsset.Object;
+	FootstepAudio->SetSound(StepSound);
+	CryAudio->SetSound(CrySound);
+	for (UAudioComponent* Audio : { FootstepAudio.Get(), CryAudio.Get() })
 	{
-		FootstepAudio->SetSound(NoiseSound.Object);
-		CryAudio->SetSound(NoiseSound.Object);
+		Audio->bEnableLowPassFilter = false;
+		Audio->AttenuationOverrides.bEnableOcclusion = true;
+		Audio->AttenuationOverrides.OcclusionTraceChannel = ECC_Visibility;
+		Audio->AttenuationOverrides.OcclusionLowPassFilterFrequency = 700.0f;
+		Audio->AttenuationOverrides.OcclusionVolumeAttenuation = 0.5f;
 	}
 }
 
@@ -345,9 +356,9 @@ void AFacilityTenant::UpdateEvidence(float DeltaSeconds)
 	{
 		if (State == ETenantState::Rushing && CryAudio->Sound)
 		{
-			CryAudio->SetPitchMultiplier(FMath::FRandRange(0.35f, 0.45f));
+			CryAudio->SetPitchMultiplier(FMath::FRandRange(0.92f, 1.08f));
 			CryAudio->Play();
-			CryStopTime = Now + 0.35f;
+			CryStopTime = Now + 2.0f;
 		}
 		CosmeticState = State;
 	}
@@ -364,9 +375,10 @@ void AFacilityTenant::UpdateEvidence(float DeltaSeconds)
 		if (KnockCooldown <= 0.0f)
 		{
 			KnockCooldown = FMath::FRandRange(0.45f, 0.75f);
-			FootstepAudio->SetPitchMultiplier(FMath::FRandRange(0.3f, 0.4f));
+			FootstepAudio->SetSound(KnockSound);
+			FootstepAudio->SetPitchMultiplier(FMath::FRandRange(0.9f, 1.05f));
 			FootstepAudio->Play();
-			StepStopTime = Now + 0.15f;
+			StepStopTime = Now + 0.5f;
 		}
 		return;
 	}
@@ -375,8 +387,9 @@ void AFacilityTenant::UpdateEvidence(float DeltaSeconds)
 	if (DistanceSinceStep >= StrideLength)
 	{
 		DistanceSinceStep = 0.0f;
-		FootstepAudio->SetPitchMultiplier(FMath::FRandRange(0.4f, 0.55f));
+		FootstepAudio->SetSound(StepSound);
+		FootstepAudio->SetPitchMultiplier(FMath::FRandRange(0.85f, 1.05f));
 		FootstepAudio->Play();
-		StepStopTime = Now + 0.11f;
+		StepStopTime = Now + 0.4f;
 	}
 }

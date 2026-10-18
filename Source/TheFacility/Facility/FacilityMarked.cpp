@@ -69,11 +69,14 @@ AFacilityMarked::AFacilityMarked()
 	FootstepAudio->AttenuationOverrides.AttenuationShapeExtents = FVector(150.0f);
 	FootstepAudio->AttenuationOverrides.FalloffDistance = 1800.0f;
 
-	static ConstructorHelpers::FObjectFinder<USoundBase> StepSound(TEXT("/Engine/EngineSounds/WhiteNoise.WhiteNoise"));
-	if (StepSound.Succeeded())
-	{
-		FootstepAudio->SetSound(StepSound.Object);
-	}
+	// a small, dry step (generated, Saved/QA/make_sounds.py), muffled through walls
+	static ConstructorHelpers::FObjectFinder<USoundBase> StepAsset(TEXT("/Game/Facility/Audio/S_MarkedStep.S_MarkedStep"));
+	FootstepAudio->SetSound(StepAsset.Object);
+	FootstepAudio->bEnableLowPassFilter = false;
+	FootstepAudio->AttenuationOverrides.bEnableOcclusion = true;
+	FootstepAudio->AttenuationOverrides.OcclusionTraceChannel = ECC_Visibility;
+	FootstepAudio->AttenuationOverrides.OcclusionLowPassFilterFrequency = 700.0f;
+	FootstepAudio->AttenuationOverrides.OcclusionVolumeAttenuation = 0.5f;
 }
 
 void AFacilityMarked::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -434,9 +437,9 @@ void AFacilityMarked::UpdateEvidence(float DeltaSeconds)
 		if (DistanceSinceStep >= StrideLength)
 		{
 			DistanceSinceStep = 0.0f;
-			FootstepAudio->SetPitchMultiplier(FMath::FRandRange(0.55f, 0.85f));
+			FootstepAudio->SetPitchMultiplier(FMath::FRandRange(0.9f, 1.15f));
 			FootstepAudio->Play();
-			StepStopTime = Now + 0.09f;
+			StepStopTime = Now + 0.3f;
 		}
 	}
 

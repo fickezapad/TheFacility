@@ -24,7 +24,9 @@ void UFacilityInteractionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 
 	// focus is only meaningful for the player looking through this pawn
 	const APawn* Pawn = Cast<APawn>(GetOwner());
-	if (!Pawn || !Pawn->IsLocallyControlled())
+	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(Pawn);
+	// from inside a hiding spot there is nothing to reach: interact means coming out
+	if (!Pawn || !Pawn->IsLocallyControlled() || (Character && Character->IsHiding()))
 	{
 		FocusedActor.Reset();
 		return;
@@ -58,6 +60,11 @@ void UFacilityInteractionComponent::Server_Interact_Implementation(AActor* Targe
 	APawn* Pawn = Cast<APawn>(GetOwner());
 
 	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(Pawn);
+	if (Character && Character->IsHiding())
+	{
+		return;
+	}
+
 	if (Character && !Character->IsStanding())
 	{
 		UE_LOG(LogTheFacility, Log, TEXT("Interact rejected, player is down or retained: %s -> %s"), *GetNameSafe(Pawn), *GetNameSafe(Target));

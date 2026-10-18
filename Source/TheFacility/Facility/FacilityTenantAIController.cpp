@@ -175,7 +175,7 @@ bool AFacilityTenantAIController::TryCatch()
 	for (TActorIterator<AFacilityCharacter> It(GetWorld()); It; ++It)
 	{
 		AFacilityCharacter* Player = *It;
-		if (!Player->IsStanding())
+		if (!Player->IsStanding() || Player->IsHiding())
 		{
 			continue;
 		}

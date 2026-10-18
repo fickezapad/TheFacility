@@ -62,12 +62,20 @@ protected:
 	bool bSwingReversed = false;
 
 	/** Beaten down: open for good, can't be closed or locked again */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category="Door")
+	UPROPERTY(ReplicatedUsing=OnRep_Slammed, BlueprintReadOnly, Category="Door")
 	bool bBroken = false;
 
 	/** Locked by the Facility for a while, not by anyone's key. Lets go by itself */
-	UPROPERTY(Replicated, BlueprintReadOnly, Category="Door")
+	UPROPERTY(ReplicatedUsing=OnRep_Slammed, BlueprintReadOnly, Category="Door")
 	bool bHeldShut = false;
+
+	/** Hinges, on every open and close */
+	UPROPERTY(EditAnywhere, Category="Door|Sound")
+	TObjectPtr<class USoundBase> CreakSound;
+
+	/** Slammed and held by the Facility, or beaten down */
+	UPROPERTY(EditAnywhere, Category="Door|Sound")
+	TObjectPtr<class USoundBase> SlamSound;
 
 	FTimerHandle HoldTimer;
 
@@ -129,6 +137,13 @@ protected:
 
 	UFUNCTION()
 	void OnRep_Open();
+
+	/** Clients: a slam (held shut, or broken) is heard */
+	UFUNCTION()
+	void OnRep_Slammed();
+
+	/** Local: plays the slam here */
+	void PlaySlam();
 
 	/** Starts ticking until the swing reaches the current open state */
 	void StartSwing();

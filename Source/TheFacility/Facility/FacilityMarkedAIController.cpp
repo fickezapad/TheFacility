@@ -3,6 +3,7 @@
 #include "Facility/FacilityMarkedAIController.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDoor.h"
+#include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
 #include "Engine/World.h"
@@ -83,6 +84,11 @@ void AFacilityMarkedAIController::Think()
 		{
 			StopMovement();
 		}
+		return;
+	}
+
+	if (ThinkAboutHiddenMark(Creature, Target, State))
+	{
 		return;
 	}
 
@@ -168,6 +174,71 @@ void AFacilityMarkedAIController::Think()
 	default:
 		break;
 	}
+}
+
+bool AFacilityMarkedAIController::ThinkAboutHiddenMark(AFacilityMarked* Creature, AFacilityCharacter* Target, EMarkedState State)
+{
+	AFacilityHidingSpot* Spot = Target->GetHidingSpot();
+	if (!Spot)
+	{
+		MarkHideSpot.Reset();
+		bSawMarkHide = false;
+		return false;
+	}
+
+	if (MarkHideSpot.Get() != Spot)
+	{
+		// decided once, as they go in: did it have them in sight a moment ago?
+		MarkHideSpot = Spot;
+		// only if it was after them with them in sight; one that has only just appeared saw nothing
+		bSawMarkHide = State == EMarkedState::Chasing && TimeSinceSeen <= SawHideWindow;
+		UE_LOG(LogTheFacility, Log, TEXT("The Marked: its mark hides in %s, %s"), *Spot->GetName(), bSawMarkHide ? TEXT("and it saw them go in") : TEXT("unseen"));
+	}
+
+	OpenDoorAhead();
+	const bool bIdle = GetMoveStatus() == EPathFollowingStatus::Idle;
+
+	if (bSawMarkHide)
+	{
+		// it walks up to the spot and drags them out
+		const FVector Front = Spot->GetSpotPoint(60.0f, 100.0f);
+		if (State != EMarkedState::Chasing)
+		{
+			Enter(EMarkedState::Chasing);
+		}
+		SetSpeed(SearchSpeed);
+		if (FVector::Dist2D(GetPawn()->GetActorLocation(), Front) <= CatchRange)
+		{
+			StopMovement();
+			UE_LOG(LogTheFacility, Log, TEXT("The Marked drags its mark out of %s"), *Spot->GetName());
+			Spot->Evict(TEXT("dragged out by The Marked"));
+			Creature->CatchMark();
+			return true;
+		}
+		if (bIdle || TimeToRepath <= 0.0f)
+		{
+			MoveTowards(Front, 30.0f);
+			TimeToRepath = 0.5f;
+		}
+		return true;
+	}
+
+	// lost: it searches where it last saw them, then drifts around there. It never knows where the hidden mark is
+	TimeSinceSeen += ThinkInterval;
+	if (State == EMarkedState::Chasing)
+	{
+		Enter(EMarkedState::Searching);
+	}
+	else if (State == EMarkedState::Searching && StateTime > SearchTime)
+	{
+		Enter(EMarkedState::Hunting);
+	}
+	SetSpeed(State == EMarkedState::Hunting ? HuntSpeed : SearchSpeed);
+	if (bIdle)
+	{
+		MoveTowards(RandomPointNear(LastKnownLocation, State == EMarkedState::Hunting ? HuntRadius * 2.0f : SearchRadius), 50.0f);
+	}
+	return true;
 }
 
 bool AFacilityMarkedAIController::CanSee(const AFacilityCharacter* Target, float Distance) const

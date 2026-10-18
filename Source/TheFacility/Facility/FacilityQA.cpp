@@ -12,6 +12,7 @@
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityFuseBox.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityInteractable.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
@@ -295,6 +296,50 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAAttention(
 		}
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs CmdQAPlaceCreature(
+	TEXT("facility.QA.PlaceCreature"),
+	TEXT("QA, host: moves a creature, facing Yaw. facility.QA.PlaceCreature Marked|Tenant X Y Yaw"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (!IsHost(World, TEXT("facility.QA.PlaceCreature")) || Args.Num() < 4)
+		{
+			return;
+		}
+
+		AActor* Creature = nullptr;
+		if (Args[0] == TEXT("Marked"))
+		{
+			TActorIterator<AFacilityMarked> It(World);
+			Creature = It ? *It : nullptr;
+		}
+		else
+		{
+			TActorIterator<AFacilityTenant> It(World);
+			Creature = It ? *It : nullptr;
+		}
+		if (Creature)
+		{
+			const FVector Location(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), Creature->GetActorLocation().Z);
+			Creature->TeleportTo(Location, FRotator(0.0f, ArgFloat(Args, 3, 0.0f), 0.0f));
+			if (APawn* Pawn = Cast<APawn>(Creature); Pawn && Pawn->GetController())
+			{
+				Pawn->GetController()->SetControlRotation(FRotator(0.0f, ArgFloat(Args, 3, 0.0f), 0.0f));
+			}
+		}
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQAUnhide(
+	TEXT("facility.QA.Unhide"),
+	TEXT("QA, host: a hidden player asks to come out, as if they pressed interact. facility.QA.Unhide <Player>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Unhide")) ? GetPlayer(World, ArgInt(Args, 0, 0)) : nullptr;
+		if (Player && Player->GetHidingSpot())
+		{
+			Player->GetHidingSpot()->RequestLeave(Player);
+		}
+	}));
+
 static FAutoConsoleCommandWithWorldAndArgs CmdQADown(
 	TEXT("facility.QA.Down"),
 	TEXT("QA, host: downs a player, or helps them up. facility.QA.Down <Player> [1|0]"),
@@ -324,6 +369,17 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 		{
 			TActorIterator<AFacilityTenant> It(World);
 			Check(Line, Args[1], It ? StaticEnum<ETenantState>()->GetNameStringByValue((int64)It->GetTenantState()) : TEXT("Missing"));
+		}
+		else if (What == TEXT("Altitude") && Args.Num() >= 4)
+		{
+			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
+			const float Z = Player ? Player->GetActorLocation().Z : -1.0e9f;
+			Check(Line, TEXT("1"), Z >= ArgFloat(Args, 2, 0.0f) && Z <= ArgFloat(Args, 3, 0.0f) ? TEXT("1") : FString::Printf(TEXT("0 (z %.0f)"), Z));
+		}
+		else if (What == TEXT("Hiding") && Args.Num() >= 3)
+		{
+			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
+			Check(Line, Args[2], Player && Player->IsHiding() ? TEXT("1") : TEXT("0"));
 		}
 		else if (What == TEXT("Director"))
 		{

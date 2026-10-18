@@ -72,6 +72,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Director|Answers", meta=(ClampMin=0, Units="cm"))
 	float PointNoiseRadius = 5000.0f;
 
+	/** Heard by everyone, everywhere, when the Facility answers */
+	UPROPERTY(EditAnywhere, Category="Director|Sound")
+	TObjectPtr<class USoundBase> WhisperSound;
+
+	/** Where the lights die */
+	UPROPERTY(EditAnywhere, Category="Director|Sound")
+	TObjectPtr<class USoundBase> BlackoutSound;
+
 	/** Server: the real value. Clients see it rounded, for the debug panel */
 	float Attention = 0.0f;
 

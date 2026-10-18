@@ -1,12 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityFuseBox.h"
+#include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
+#include "Sound/SoundBase.h"
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
@@ -27,6 +29,11 @@ AFacilityFuseBox::AFacilityFuseBox()
 		Mesh->SetStaticMesh(CubeMesh.Object);
 		Mesh->SetRelativeScale3D(FVector(0.15f, 0.6f, 0.4f));
 	}
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> FitAsset(TEXT("/Game/Facility/Audio/S_FuseFit.S_FuseFit"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> PowerAsset(TEXT("/Game/Facility/Audio/S_PowerOn.S_PowerOn"));
+	FitSound = FitAsset.Object;
+	PowerOnSound = PowerAsset.Object;
 }
 
 void AFacilityFuseBox::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -34,6 +41,20 @@ void AFacilityFuseBox::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AFacilityFuseBox, FusesFitted);
+}
+
+void AFacilityFuseBox::OnRep_FusesFitted()
+{
+	PlayFitSound();
+}
+
+void AFacilityFuseBox::PlayFitSound()
+{
+	FacilityAudio::PlayAt(this, FitSound, GetActorLocation(), 1500.0f);
+	if (FusesFitted >= FusesRequired)
+	{
+		FacilityAudio::PlayAt(this, PowerOnSound, GetActorLocation(), 4000.0f, 1.2f);
+	}
 }
 
 bool AFacilityFuseBox::IsPowerRestored() const
@@ -82,6 +103,7 @@ void AFacilityFuseBox::Interact_Implementation(APawn* InstigatorPawn)
 	}
 
 	++FusesFitted;
+	PlayFitSound();
 	if (FusesFitted < FusesRequired)
 	{
 		UE_LOG(LogTheFacility, Log, TEXT("Fuse fitted by %s: %d of %d"), *GameState->MakeSignerName(Character->GetPlayerState()), FusesFitted, FusesRequired);

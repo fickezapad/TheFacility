@@ -7,6 +7,7 @@
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityFuseBox.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
@@ -290,6 +291,19 @@ void AFacilityHUD::DrawHUD()
 				? Prompt.ToString()
 				: FString::Printf(TEXT("[%s] %s"), *KeyText.ToString(), *Prompt.ToString());
 			DrawCentered(PromptText, CenterX, CenterY + 40.0f, FLinearColor::White, GEngine->GetMediumFont());
+		}
+
+		if (const AFacilityHidingSpot* Spot = Character->GetHidingSpot())
+		{
+			const FText KeyText = Character->GetInteractKeyText();
+			DrawCentered(FString::Printf(TEXT("Hidden %s.  [%s] come out%s"), Spot->GetKind() == EFacilityHidingKind::Closet ? TEXT("in the closet") : TEXT("under the bed"),
+				KeyText.IsEmpty() ? TEXT("E") : *KeyText.ToString(), Spot->GetKind() == EFacilityHidingKind::UnderBed ? TEXT(" (slowly)") : TEXT("")),
+				CenterX, Canvas->ClipY * 0.8f, FLinearColor(0.75f, 0.75f, 0.7f), GEngine->GetMediumFont());
+			const float Left = Spot->GetTimeLeft();
+			if (Left < 15.0f)
+			{
+				DrawCentered(TEXT("Something is coming to open it."), CenterX, Canvas->ClipY * 0.8f + 28.0f, FLinearColor(0.85f, 0.3f, 0.28f, 0.5f + 0.5f * FMath::Abs(FMath::Sin(GetWorld()->GetTimeSeconds() * 3.0f))), GEngine->GetSmallFont());
+			}
 		}
 
 		if (const AFacilityDoor* Door = Character->GetFocusedLockableDoor())

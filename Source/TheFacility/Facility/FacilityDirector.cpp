@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityDirector.h"
+#include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityGameState.h"
@@ -12,6 +13,8 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Net/UnrealNetwork.h"
+#include "Sound/SoundBase.h"
+#include "UObject/ConstructorHelpers.h"
 #include "TimerManager.h"
 #include "UObject/UObjectIterator.h"
 #include "TheFacility.h"
@@ -24,6 +27,11 @@ AFacilityDirector::AFacilityDirector()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickInterval = 0.25f;
 	SetHidden(true);
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> WhisperAsset(TEXT("/Game/Facility/Audio/S_FacilityWhisper.S_FacilityWhisper"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> BlackoutAsset(TEXT("/Game/Facility/Audio/S_Blackout.S_Blackout"));
+	WhisperSound = WhisperAsset.Object;
+	BlackoutSound = BlackoutAsset.Object;
 }
 
 void AFacilityDirector::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -343,6 +351,7 @@ void AFacilityDirector::Multicast_Whisper_Implementation(const FString& Text)
 {
 	WhisperText = Text;
 	WhisperTime = GetWorld()->GetTimeSeconds();
+	FacilityAudio::Play2D(this, WhisperSound, 0.8f);
 }
 
 const FString& AFacilityDirector::GetWhisper(float& OutAge) const
@@ -357,6 +366,8 @@ void AFacilityDirector::Multicast_Blackout_Implementation(FVector_NetQuantize Ce
 	{
 		return;
 	}
+
+	FacilityAudio::PlayAt(this, BlackoutSound, Center, Radius + 1000.0f);
 
 	// building lights only: anything carried by a player (their flashlight) or a creature keeps working
 	const double Until = GetWorld()->GetTimeSeconds() + Duration;

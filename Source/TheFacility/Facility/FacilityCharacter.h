@@ -8,6 +8,7 @@
 #include "FacilityCharacter.generated.h"
 
 class AFacilityDoor;
+class AFacilityHidingSpot;
 class UFacilityInteractionComponent;
 class UFacilityMovementComponent;
 class UInputAction;
@@ -43,6 +44,10 @@ class THEFACILITY_API AFacilityCharacter : public ATheFacilityCharacter, public 
 	/** Follows where the player looks, on every machine, so teammates see each other's beams */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USpotLightComponent> Flashlight;
+
+	/** Hidden, the eyes adjust: a faint light around the spot, switched on only on the hiding player's own machine */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<class UPointLightComponent> DarkAdaptLight;
 
 public:
 
@@ -88,6 +93,10 @@ protected:
 	/** Down: can't move or interact until a teammate helps them up. Server owned */
 	UPROPERTY(ReplicatedUsing=OnRep_LifeState, BlueprintReadOnly, Category="Facility")
 	bool bDowned = false;
+
+	/** The closet or bed this player hides in, if any. Server owned */
+	UPROPERTY(ReplicatedUsing=OnRep_LifeState, BlueprintReadOnly, Category="Facility")
+	TObjectPtr<AFacilityHidingSpot> HidingSpot;
 
 	/** Taken by the Facility for the rest of the run. Server owned */
 	UPROPERTY(ReplicatedUsing=OnRep_LifeState, BlueprintReadOnly, Category="Facility")
@@ -214,6 +223,15 @@ public:
 	/** Server only. The Facility keeps this player for the rest of the run */
 	void Retain();
 
+	/** Hidden in a closet or under a bed: can't move, can't be seen, makes no sound */
+	UFUNCTION(BlueprintPure, Category="Facility")
+	bool IsHiding() const { return HidingSpot != nullptr; }
+
+	AFacilityHidingSpot* GetHidingSpot() const { return HidingSpot; }
+
+	/** Server only. Called by the hiding spot as the player goes in (Spot) or comes out (null) */
+	void SetHidingSpot(AFacilityHidingSpot* Spot);
+
 	bool IsFlashlightOn() const { return bFlashlightOn; }
 
 	/** World time of this player's last flash on this machine */
@@ -287,6 +305,10 @@ protected:
 
 	/** Server: reports this player's footsteps to the Tenant */
 	void UpdateFootstepNoise(float DeltaSeconds);
+
+	/** Asks the hiding spot to let this player out */
+	UFUNCTION(Server, Reliable)
+	void Server_LeaveHiding();
 
 	/** Retained players cycle which teammate they watch */
 	UFUNCTION(Server, Reliable)

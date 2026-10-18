@@ -85,6 +85,17 @@ protected:
 	float DoorWaitTime = 0.0f;
 	bool bLoggedNoNavigation = false;
 
+	/** If it had its mark in sight this recently when they hid, it saw them go in */
+	UPROPERTY(EditAnywhere, Category="Marked|Senses", meta=(ClampMin=0, Units="s"))
+	float SawHideWindow = 1.0f;
+
+	/** The mark's current hiding spot, while they hide, and whether it saw them get in */
+	TWeakObjectPtr<class AFacilityHidingSpot> MarkHideSpot;
+	bool bSawMarkHide = false;
+
+	/** Handles a mark who is hiding. Returns true if that took this think */
+	bool ThinkAboutHiddenMark(AFacilityMarked* Creature, AFacilityCharacter* Target, EMarkedState State);
+
 public:
 
 	AFacilityMarkedAIController();
