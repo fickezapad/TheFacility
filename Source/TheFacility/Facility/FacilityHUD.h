@@ -9,7 +9,7 @@
 /**
  *  Prototype HUD drawn with the canvas, per viewport.
  *  Shows a crosshair, the interaction prompt, the objective, carried items, stamina, the downed and retained states,
- *  the end-of-run screen and (with facility.ShowLedger 1) a debug panel with the Facility ledger.
+ *  the end-of-run screen and (with facility.QA.HUD 1) a debug panel with the Facility ledger.
  *  Each PIE window draws from its own world, so it shows what that machine actually received.
  */
 UCLASS()

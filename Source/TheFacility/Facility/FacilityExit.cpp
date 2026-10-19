@@ -2,6 +2,7 @@
 
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityLook.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -28,6 +29,15 @@ AFacilityExit::AFacilityExit()
 		Gate->SetRelativeLocation(FVector(0.0f, 0.0f, 150.0f));
 		Gate->SetRelativeScale3D(FVector(0.2f, 3.0f, 3.0f));
 	}
+	Gate->SetMaterial(0, FacilityLook::Material(TEXT("MI_Retro_Rust")));
+	// the gate posts stay when the gate is gone; a padlock and chain hang on it until then
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		FacilityLook::AddPiece(this, Side == 0 ? TEXT("Look_PostLeft") : TEXT("Look_PostRight"), Root, NAME_None, TEXT("Cylinder"), TEXT("MI_Retro_Metal"),
+			FVector(0.0f, Side == 0 ? -158.0f : 158.0f, 165.0f), FRotator::ZeroRotator, FVector(0.16f, 0.16f, 3.3f));
+	}
+	FacilityLook::AddPiece(this, TEXT("Look_Chain"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector(-60.0f, 0.0f, -5.0f), FRotator::ZeroRotator, FVector(0.04f, 0.05f, 0.5f), true);
+	FacilityLook::AddPiece(this, TEXT("Look_Padlock"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Brass"), FVector(-70.0f, 0.0f, -14.0f), FRotator::ZeroRotator, FVector(0.04f, 0.08f, 0.1f), true);
 
 	// the zone is only ever tested against player locations, so it needs no collision
 	ExitZone = CreateDefaultSubobject<UBoxComponent>(TEXT("ExitZone"));
@@ -82,7 +92,7 @@ void AFacilityExit::HandlePowerRestored()
 	}
 
 	bOpen = true;
-	Gate->SetVisibility(false);
+	Gate->SetVisibility(false, true);
 	Gate->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	UE_LOG(LogTheFacility, Log, TEXT("%s: gate open on the %s"), *GetName(), GetNetMode() == NM_Client ? TEXT("client") : TEXT("server"));
 }

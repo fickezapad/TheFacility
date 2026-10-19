@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityLook.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityMarkedAIController.h"
@@ -17,6 +18,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
+#include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UObjectIterator.h"
 #include "TheFacility.h"
@@ -47,8 +49,29 @@ AFacilityMarked::AFacilityMarked()
 		GetMesh()->SetAnimInstanceClass(BodyAnim.Class);
 	}
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f, 0.0f, -115.0f), FRotator(0.0f, -90.0f, 0.0f));
-	GetMesh()->SetRelativeScale3D(FVector(0.95f, 0.95f, 1.25f));
+	GetMesh()->SetRelativeScale3D(FVector(0.78f, 0.78f, 1.27f));
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// matte black and stretched thin: a long, featureless head, long fingers, and the ledger's ink mark glowing faintly on
+	// its chest. Bone frames on the mannequin: head and spine X up, Y forward, Z to the side. Hands point along +X (left), -X (right)
+	UMaterialInterface* Black = FacilityLook::Material(TEXT("MI_Char_Marked"));
+	GetMesh()->SetMaterial(0, Black);
+	GetMesh()->SetMaterial(1, Black);
+	const FName Head(TEXT("head"));
+	FacilityLook::AddPiece(this, TEXT("Look_Head"), GetMesh(), Head, TEXT("Sphere"), TEXT("MI_Char_Marked"), FVector(13.0f, 2.0f, 0.0f), FRotator::ZeroRotator, FVector(0.34f, 0.25f, 0.24f));
+	FacilityLook::AddPiece(this, TEXT("Look_Sigil"), GetMesh(), FName(TEXT("spine_05")), TEXT("Plane"), TEXT("MI_Glow_Sigil"), FVector(0.0f, 17.0f, 0.0f), FRotator(0.0f, 0.0f, 90.0f), FVector(0.17f, 0.28f, 1.0f));
+	FacilityLook::AddPiece(this, TEXT("Look_Brow"), GetMesh(), Head, TEXT("Plane"), TEXT("MI_Glow_Sigil"), FVector(14.0f, 14.5f, 0.0f), FRotator(0.0f, 0.0f, 90.0f), FVector(0.08f, 0.12f, 1.0f));
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const FName Hand = Side == 0 ? FName(TEXT("hand_l")) : FName(TEXT("hand_r"));
+		const float Along = Side == 0 ? 1.0f : -1.0f;
+		for (int32 Finger = 0; Finger < 2; ++Finger)
+		{
+			const float Spread = Finger == 0 ? -2.0f : 2.0f;
+			FacilityLook::AddPiece(this, *FString::Printf(TEXT("Look_Finger_%d_%d"), Side, Finger), GetMesh(), Hand, TEXT("Cone"), TEXT("MI_Char_Marked"),
+				FVector(Along * 24.0f, Spread, 0.0f), FRotator(-90.0f * Along, 0.0f, 0.0f), FVector(0.03f, 0.03f, 0.3f));
+		}
+	}
 
 	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;

@@ -38,6 +38,16 @@ class THEFACILITY_API AFacilityHidingSpot : public AActor, public IFacilityInter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UStaticMeshComponent> Mesh;
 
+	/** A closet's door seam and knobs; hidden on other kinds */
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMeshComponent>> ClosetPieces;
+
+	/** What an under-bed spot is dressed in: the bed's skirt */
+	UPROPERTY()
+	TObjectPtr<class UMaterialInterface> BedSkirtMaterial;
+
+	virtual void OnConstruction(const FTransform& Transform) override;
+
 protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Hiding")

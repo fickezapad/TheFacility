@@ -3,6 +3,7 @@
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityLook.h"
 #include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -49,6 +50,17 @@ AFacilityDoor::AFacilityDoor()
 		DoorMesh->SetStaticMesh(CubeMesh.Object);
 		DoorMesh->SetRelativeLocation(FVector(0.0f, 50.0f, 105.0f));
 		DoorMesh->SetRelativeScale3D(FVector(0.1f, 1.0f, 2.1f));
+	}
+	DoorMesh->SetMaterial(0, FacilityLook::Material(TEXT("MI_Retro_Door")));
+
+	// brass knobs on both faces, near the free edge; they swing with the slab
+	for (int32 Face = 0; Face < 2; ++Face)
+	{
+		const float Out = Face == 0 ? 8.0f : -8.0f;
+		FacilityLook::AddPiece(this, Face == 0 ? TEXT("Look_KnobFront") : TEXT("Look_KnobBack"), Hinge, NAME_None, TEXT("Sphere"), TEXT("MI_Retro_Brass"),
+			FVector(Out, 88.0f, 100.0f), FRotator::ZeroRotator, FVector(0.065f), true);
+		FacilityLook::AddPiece(this, Face == 0 ? TEXT("Look_PlateFront") : TEXT("Look_PlateBack"), Hinge, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Brass"),
+			FVector(Out * 0.7f, 88.0f, 96.0f), FRotator::ZeroRotator, FVector(0.01f, 0.05f, 0.16f), true);
 	}
 }
 

@@ -4,6 +4,7 @@
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDirector.h"
 #include "Facility/FacilityHidingSpot.h"
+#include "Facility/FacilityLook.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityTenantAIController.h"
 #include "Animation/AnimInstance.h"
@@ -11,6 +12,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Materials/MaterialInterface.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -46,10 +48,31 @@ AFacilityTenant::AFacilityTenant()
 	{
 		GetMesh()->SetAnimInstanceClass(BodyAnim.Class);
 	}
-	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f, 0.0f, -95.0f), FRotator(0.0f, -90.0f, 0.0f));
-	// placeholder body: the mannequin squashed short and wide
-	GetMesh()->SetRelativeScale3D(FVector(1.45f, 1.3f, 1.0f));
+	// hunched forward over its own feet, heavy across the shoulders
+	GetMesh()->SetRelativeLocationAndRotation(FVector(-14.0f, 0.0f, -95.0f), FRotator(0.0f, -90.0f, HunchDegrees));
+	GetMesh()->SetRelativeScale3D(FVector(1.3f, 1.2f, 1.05f));
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// pale, wet skin; a burlap sack tied over an eyeless head; long claws past the fingers.
+	// Bone frames on the mannequin: head X up, Y forward, Z to the side. Hands point along +X (left) and -X (right)
+	UMaterialInterface* Skin = FacilityLook::Material(TEXT("MI_Char_TenantSkin"));
+	GetMesh()->SetMaterial(0, Skin);
+	GetMesh()->SetMaterial(1, Skin);
+	const FName Head(TEXT("head"));
+	FacilityLook::AddPiece(this, TEXT("Look_Sack"), GetMesh(), Head, TEXT("Sphere"), TEXT("MI_Char_Burlap"), FVector(9.0f, 2.5f, 0.0f), FRotator::ZeroRotator, FVector(0.33f, 0.29f, 0.27f));
+	FacilityLook::AddPiece(this, TEXT("Look_SackTop"), GetMesh(), Head, TEXT("Cone"), TEXT("MI_Char_Burlap"), FVector(26.0f, -3.0f, 1.0f), FRotator(-80.0f, 0.0f, 0.0f), FVector(0.14f, 0.12f, 0.13f));
+	FacilityLook::AddPiece(this, TEXT("Look_Rope"), GetMesh(), Head, TEXT("Cylinder"), TEXT("MI_Char_Backpack"), FVector(-3.0f, 1.0f, 0.0f), FRotator(-90.0f, 0.0f, 0.0f), FVector(0.19f, 0.19f, 0.035f));
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const FName Hand = Side == 0 ? FName(TEXT("hand_l")) : FName(TEXT("hand_r"));
+		const float Along = Side == 0 ? 1.0f : -1.0f;
+		for (int32 Finger = 0; Finger < 3; ++Finger)
+		{
+			const float Spread = (Finger - 1) * 3.0f;
+			FacilityLook::AddPiece(this, *FString::Printf(TEXT("Look_Claw_%d_%d"), Side, Finger), GetMesh(), Hand, TEXT("Cone"), TEXT("MI_Char_Claw"),
+				FVector(Along * (30.0f - FMath::Abs(Spread)), Spread, 1.5f), FRotator(-90.0f * Along, 0.0f, 0.0f), FVector(0.035f, 0.035f, 0.38f));
+		}
+	}
 
 	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;

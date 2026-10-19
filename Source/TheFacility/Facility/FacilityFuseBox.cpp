@@ -4,6 +4,7 @@
 #include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityLook.h"
 #include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -29,6 +30,11 @@ AFacilityFuseBox::AFacilityFuseBox()
 		Mesh->SetStaticMesh(CubeMesh.Object);
 		Mesh->SetRelativeScale3D(FVector(0.15f, 0.6f, 0.4f));
 	}
+	Mesh->SetMaterial(0, FacilityLook::Material(TEXT("MI_Retro_Metal")));
+	// a pull handle and a small red warning lamp on the front (+X) face, in the cube's own units
+	FacilityLook::AddPiece(this, TEXT("Look_Handle"), Mesh, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Rust"), FVector(56.0f, 38.0f, 0.0f), FRotator::ZeroRotator, FVector(0.03f, 0.03f, 0.16f), true);
+	FacilityLook::AddPiece(this, TEXT("Look_Lamp"), Mesh, NAME_None, TEXT("Sphere"), TEXT("MI_Retro_Neon"), FVector(52.0f, -38.0f, 36.0f), FRotator::ZeroRotator, FVector(0.035f), true);
+	FacilityLook::AddPiece(this, TEXT("Look_Label"), Mesh, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Paper"), FVector(51.0f, -5.0f, 30.0f), FRotator::ZeroRotator, FVector(0.005f, 0.2f, 0.06f), true);
 
 	static ConstructorHelpers::FObjectFinder<USoundBase> FitAsset(TEXT("/Game/Facility/Audio/S_FuseFit.S_FuseFit"));
 	static ConstructorHelpers::FObjectFinder<USoundBase> PowerAsset(TEXT("/Game/Facility/Audio/S_PowerOn.S_PowerOn"));

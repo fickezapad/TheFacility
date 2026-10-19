@@ -11,7 +11,8 @@
  *  and now and then they go out for a few seconds.
  *
  *  Purely cosmetic and local: each machine flickers on its own, nothing is replicated and nothing in gameplay reads it.
- *  It switches the visibility of every light and text component on its target actors.
+ *  It switches the visibility of every light and text component on its target actors, and dims the glow of their meshes
+ *  (neon tubes: a material with an Emissive parameter) without hiding them, so a dead tube is still there.
  */
 UCLASS()
 class THEFACILITY_API AFacilityFlicker : public AActor
@@ -23,6 +24,10 @@ protected:
 	/** Actors whose lights and text flicker */
 	UPROPERTY(EditInstanceOnly, Category="Flicker")
 	TArray<TObjectPtr<AActor>> Targets;
+
+	/** The Emissive the targets' meshes glow at while lit; dark, they keep a twentieth of it */
+	UPROPERTY(EditAnywhere, Category="Flicker", meta=(ClampMin=0))
+	float LitEmissive = 6.0f;
 
 	/** Seconds between bursts, at random within this range */
 	UPROPERTY(EditAnywhere, Category="Flicker", meta=(ClampMin=0.1, Units="s"))

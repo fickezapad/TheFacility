@@ -21,9 +21,9 @@
 #include "EngineUtils.h"
 
 static TAutoConsoleVariable<int32> CVarFacilityShowLedger(
-	TEXT("facility.ShowLedger"),
-	1,
-	TEXT("Draw the Facility ledger on the HUD. 0 = off, 1 = on"));
+	TEXT("facility.QA.HUD"),
+	0,
+	TEXT("QA: draw the debug panel on the HUD (machine, keys, run, creatures, the Facility ledger). 0 = off, 1 = on"));
 
 void AFacilityHUD::DrawLine(const FString& Text, float X, float& Y, const FLinearColor& Color)
 {
@@ -261,23 +261,26 @@ void AFacilityHUD::DrawHUD()
 		}
 	}
 
-	// what this player carries
+	// what this player carries: one line per item, bottom left, with how to use it
 	if (Character && Character->IsStanding() && Character->GetHeldKeys().Num() > 0)
 	{
-		FString Items;
+		float ItemY = Canvas->ClipY - 32.0f - 18.0f * (Character->GetHeldKeys().Num() - 1);
 		for (const FName& Key : Character->GetHeldKeys())
 		{
-			Items += (Items.IsEmpty() ? TEXT("") : TEXT(",  ")) + AFacilityCharacter::GetItemName(Key).ToString();
-			if (Key == AFacilityCharacter::FlashCameraId)
+			const FString Name = AFacilityCharacter::GetItemName(Key).ToString().ToUpper();
+			const TCHAR* Use = Key == AFacilityCharacter::FlashCameraId ? TEXT("LMB  flash")
+				: Key == AFacilityDoor::MasterKeyId ? TEXT("LMB on a closed door  lock / unlock")
+				: TEXT("");
+			DrawText(Name, FLinearColor(0.0f, 0.0f, 0.0f, 0.7f), 25.5f, ItemY + 1.5f, GEngine->GetSmallFont());
+			DrawText(Name, FLinearColor(0.88f, 0.84f, 0.72f, 0.9f), 24.0f, ItemY, GEngine->GetSmallFont());
+			if (*Use)
 			{
-				Items += TEXT(" [LMB]");
+				float NameWidth = 0.0f, NameHeight = 0.0f;
+				GetTextSize(Name, NameWidth, NameHeight, GEngine->GetSmallFont());
+				DrawText(Use, FLinearColor(0.55f, 0.53f, 0.48f, 0.8f), 24.0f + NameWidth + 14.0f, ItemY, GEngine->GetSmallFont());
 			}
-			else if (Key == AFacilityDoor::MasterKeyId)
-			{
-				Items += TEXT(" [LMB on a closed door]");
-			}
+			ItemY += 18.0f;
 		}
-		DrawText(TEXT("Carrying: ") + Items, FLinearColor(0.85f, 0.85f, 0.8f, 0.85f), 20.0f, Canvas->ClipY - 40.0f, GEngine->GetSmallFont());
 	}
 
 	// interaction prompt

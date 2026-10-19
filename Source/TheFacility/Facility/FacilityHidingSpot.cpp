@@ -4,10 +4,12 @@
 #include "Facility/FacilityAudio.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDirector.h"
+#include "Facility/FacilityLook.h"
 #include "Facility/FacilityTenant.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
 #include "Sound/SoundBase.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
@@ -32,9 +34,34 @@ AFacilityHidingSpot::AFacilityHidingSpot()
 		Mesh->SetStaticMesh(CubeMesh.Object);
 	}
 	Mesh->SetRelativeScale3D(FVector(0.6f, 1.1f, 2.1f));
+	Mesh->SetMaterial(0, FacilityLook::Material(TEXT("MI_Retro_WoodDark")));
+	BedSkirtMaterial = FacilityLook::Material(TEXT("MI_Motel_Bed"));
+
+	// on the front (+X) face, in the cube's own units (it is 100 across, scaled by the spot)
+	ClosetPieces.Add(FacilityLook::AddPiece(this, TEXT("Look_Seam"), Mesh, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Rust"), FVector(50.5f, 0.0f, 0.0f), FRotator::ZeroRotator, FVector(0.01f, 0.012f, 0.96f)));
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		ClosetPieces.Add(FacilityLook::AddPiece(this, Side == 0 ? TEXT("Look_KnobLeft") : TEXT("Look_KnobRight"), Mesh, NAME_None, TEXT("Sphere"), TEXT("MI_Retro_Brass"),
+			FVector(52.0f, Side == 0 ? -5.0f : 5.0f, 2.0f), FRotator::ZeroRotator, FVector(0.05f), true));
+	}
 
 	static ConstructorHelpers::FObjectFinder<USoundBase> CreakAsset(TEXT("/Game/Facility/Audio/S_ClosetCreak.S_ClosetCreak"));
 	CreakSound = CreakAsset.Object;
+}
+
+void AFacilityHidingSpot::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	const bool bCloset = Kind == EFacilityHidingKind::Closet;
+	if (!bCloset && BedSkirtMaterial)
+	{
+		Mesh->SetMaterial(0, BedSkirtMaterial);
+	}
+	for (UStaticMeshComponent* Piece : ClosetPieces)
+	{
+		Piece->SetVisibility(bCloset);
+	}
 }
 
 void AFacilityHidingSpot::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

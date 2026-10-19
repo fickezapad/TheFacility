@@ -191,7 +191,7 @@ static FAutoConsoleCommand CmdQAScript(
 
 static FAutoConsoleCommandWithWorldAndArgs CmdQAMenu(
 	TEXT("facility.QA.Menu"),
-	TEXT("QA: does what a menu button does. facility.QA.Menu Host | Join <address> | Pause | Leave"),
+	TEXT("QA: does what a menu button does. facility.QA.Menu Host | Join <address> | Pause | Settings [0|1] | Set <Look|Brightness|Master|Voice> <value> | Leave | State"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		UFacilityGameInstance* GameInstance = World ? World->GetGameInstance<UFacilityGameInstance>() : nullptr;
@@ -213,6 +213,21 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAMenu(
 		{
 			GameInstance->TogglePauseMenu(World->GetFirstPlayerController());
 			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN pause menu open=%d"), GameInstance->IsPauseMenuOpen());
+		}
+		else if (Args[0] == TEXT("Settings"))
+		{
+			GameInstance->ShowMenuSettings(Args.Num() < 2 || Args[1] != TEXT("0"));
+		}
+		else if (Args[0] == TEXT("Set") && Args.Num() > 2)
+		{
+			// what the settings sliders do: Look, Brightness, Master, Voice
+			const float Value = FCString::Atof(*Args[2]);
+			if (Args[1] == TEXT("Look")) { GameInstance->SetLookSensitivity(Value); }
+			else if (Args[1] == TEXT("Brightness")) { GameInstance->SetBrightness(Value); }
+			else if (Args[1] == TEXT("Master")) { GameInstance->SetMasterVolume(Value); }
+			else if (Args[1] == TEXT("Voice")) { GameInstance->SetVoiceVolume(Value); }
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN settings look %.2f brightness %.2f master %.2f voice %.2f"),
+				GameInstance->GetLookSensitivity(), GameInstance->GetBrightness(), GameInstance->GetMasterVolume(), GameInstance->GetVoiceVolume());
 		}
 		else if (Args[0] == TEXT("State"))
 		{

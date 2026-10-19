@@ -18,7 +18,7 @@ public:
 	AFacilityMenuGameMode();
 };
 
-/** Shows the main menu for the local player */
+/** Shows the main menu for the local player, looking through the menu map's camera */
 UCLASS()
 class THEFACILITY_API AFacilityMenuPlayerController : public APlayerController
 {

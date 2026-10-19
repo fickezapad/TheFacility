@@ -7,12 +7,14 @@
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityInteractionComponent.h"
+#include "Facility/FacilityLook.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
 #include "Facility/FacilityVoiceComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraTypes.h"
 #include "Components/PointLightComponent.h"
@@ -28,6 +30,7 @@
 #include "GameFramework/PlayerState.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "TheFacility.h"
@@ -86,6 +89,59 @@ AFacilityCharacter::AFacilityCharacter(const FObjectInitializer& ObjectInitializ
 	DarkAdaptLight->AttenuationRadius = 900.0f;
 	DarkAdaptLight->SetCastShadows(false);
 	DarkAdaptLight->SetVisibility(false);
+
+	// the motel guest: a face over the mannequin head, a cap, a backpack with a reflector strip and a bedroll.
+	// Bone frames on the mannequin: head and spine X up, Y forward, Z to the side
+	USkeletalMeshComponent* Body = GetMesh();
+	const FName Head(TEXT("head"));
+	const FName Back(TEXT("spine_03"));
+	const TArray<UStaticMeshComponent*> Pieces = {
+		FacilityLook::AddPiece(this, TEXT("Look_Face"), Body, Head, TEXT("Sphere"), TEXT("MI_Char_GuestSkin"), FVector(9.0f, 2.5f, 0.0f), FRotator::ZeroRotator, FVector(0.25f, 0.23f, 0.21f)),
+		FacilityLook::AddPiece(this, TEXT("Look_CapCrown"), Body, Head, TEXT("Sphere"), nullptr, FVector(17.0f, 1.5f, 0.0f), FRotator::ZeroRotator, FVector(0.15f, 0.255f, 0.235f)),
+		FacilityLook::AddPiece(this, TEXT("Look_CapBrim"), Body, Head, TEXT("Cube"), nullptr, FVector(15.0f, 13.0f, 0.0f), FRotator::ZeroRotator, FVector(0.025f, 0.12f, 0.2f)),
+		FacilityLook::AddPiece(this, TEXT("Look_Backpack"), Body, Back, TEXT("Cube"), TEXT("MI_Char_Backpack"), FVector(2.0f, -20.0f, 0.0f), FRotator::ZeroRotator, FVector(0.42f, 0.17f, 0.32f)),
+		FacilityLook::AddPiece(this, TEXT("Look_Reflector"), Body, Back, TEXT("Cube"), TEXT("MI_Retro_Reflector"), FVector(8.0f, -28.8f, 0.0f), FRotator::ZeroRotator, FVector(0.045f, 0.006f, 0.28f)),
+		FacilityLook::AddPiece(this, TEXT("Look_Bedroll"), Body, Back, TEXT("Cylinder"), TEXT("MI_Char_Burlap"), FVector(25.0f, -20.0f, 0.0f), FRotator::ZeroRotator, FVector(0.09f, 0.09f, 0.34f)),
+	};
+	CapPieces = { Pieces[1], Pieces[2] };
+	for (UStaticMeshComponent* Piece : Pieces)
+	{
+		// the owner looks out from inside this head
+		Piece->SetOwnerNoSee(true);
+	}
+
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		JacketMaterials.Add(FacilityLook::Material(*FString::Printf(TEXT("MI_Char_Jacket_%d"), Index)));
+		CapMaterials.Add(FacilityLook::Material(*FString::Printf(TEXT("MI_Char_Cap_%d"), Index)));
+	}
+	PantsMaterial = FacilityLook::Material(TEXT("MI_Char_Pants"));
+}
+
+void AFacilityCharacter::UpdateLook()
+{
+	const APlayerState* State = GetPlayerState();
+	const int32 Index = State && JacketMaterials.Num() > 0 ? State->GetPlayerId() % JacketMaterials.Num() : INDEX_NONE;
+	if (Index == INDEX_NONE || Index == AppliedLookIndex)
+	{
+		return;
+	}
+	AppliedLookIndex = Index;
+
+	// the mannequin's slot 0 is the head and legs, slot 1 the torso and arms; the owner's own arms get the jacket too
+	TInlineComponentArray<USkeletalMeshComponent*> Bodies(this);
+	for (USkeletalMeshComponent* Body : Bodies)
+	{
+		if (Body->GetNumMaterials() > 1)
+		{
+			Body->SetMaterial(0, PantsMaterial);
+			Body->SetMaterial(1, JacketMaterials[Index]);
+		}
+	}
+	for (UStaticMeshComponent* Piece : CapPieces)
+	{
+		Piece->SetMaterial(0, CapMaterials[Index]);
+	}
 }
 
 void AFacilityCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -159,6 +215,13 @@ void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	}
 }
 
+void AFacilityCharacter::DoAim(float Yaw, float Pitch)
+{
+	const UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>();
+	const float Sensitivity = GameInstance ? GameInstance->GetLookSensitivity() : 1.0f;
+	Super::DoAim(Yaw * Sensitivity, Pitch * Sensitivity);
+}
+
 void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputComponent, UEnhancedInputLocalPlayerSubsystem* Subsystem)
 {
 	SprintAction = NewObject<UInputAction>(this, TEXT("IA_Sprint_Default"));
@@ -229,6 +292,20 @@ void AFacilityCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AFacilityCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// the player state can arrive after the pawn on other machines
+	if (AppliedLookIndex == INDEX_NONE && GetNetMode() != NM_DedicatedServer)
+	{
+		UpdateLook();
+	}
+	if (!bBrightnessApplied && GetNetMode() != NM_DedicatedServer)
+	{
+		if (const UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+		{
+			GameInstance->ApplyBrightness(this);
+		}
+		bBrightnessApplied = true;
+	}
 
 	// hidden bodies stay exactly where the spot put them, on every machine, whatever a teleport or a correction did
 	if (IsHiding() && GetCharacterMovement()->MovementMode != MOVE_None)

@@ -189,6 +189,29 @@ protected:
 	/** Local player the mappings were added to, so they can be removed when this pawn goes away */
 	TWeakObjectPtr<ULocalPlayer> InteractMappingOwner;
 
+	/** The motel guest's look, one colour per player (picked by player id, so every machine agrees): jacket and cap */
+	UPROPERTY()
+	TArray<TObjectPtr<class UMaterialInterface>> JacketMaterials;
+
+	UPROPERTY()
+	TArray<TObjectPtr<class UMaterialInterface>> CapMaterials;
+
+	UPROPERTY()
+	TObjectPtr<class UMaterialInterface> PantsMaterial;
+
+	/** Cap crown and brim, coloured with the jacket */
+	UPROPERTY()
+	TArray<TObjectPtr<class UStaticMeshComponent>> CapPieces;
+
+	/** Colour index shown on this machine; none until the player state has arrived */
+	int32 AppliedLookIndex = INDEX_NONE;
+
+	/** The player's brightness setting has been put on this character's camera, on this machine */
+	bool bBrightnessApplied = false;
+
+	/** Dresses the body (and the owner's arms) in this player's colours, once the player id is known */
+	void UpdateLook();
+
 public:
 
 	AFacilityCharacter(const FObjectInitializer& ObjectInitializer);
@@ -277,6 +300,9 @@ public:
 protected:
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+	/** Look input, scaled by the player's sensitivity setting */
+	virtual void DoAim(float Yaw, float Pitch) override;
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

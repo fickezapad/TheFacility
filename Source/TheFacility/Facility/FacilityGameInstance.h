@@ -57,6 +57,9 @@ public:
 
 	bool IsPauseMenuOpen() const { return PauseMenu.IsValid(); }
 
+	/** Turns whichever menu is open to its settings page, or back */
+	void ShowMenuSettings(bool bShow);
+
 	/** QA: where the menus are on screen, if anywhere */
 	FString DescribeMenus() const;
 
@@ -72,6 +75,27 @@ public:
 
 	/** Applies the voice settings for the local player: engine gain and gate, open mic or not, and tells the server */
 	void ApplyVoiceSettings(APlayerController* PlayerController);
+
+	/** Look, sound and picture. Saved in the user's Game.ini */
+	float GetLookSensitivity() const { return LookSensitivity; }
+	float GetMasterVolume() const { return MasterVolume; }
+	float GetVoiceVolume() const { return VoiceVolume; }
+	/** Exposure offset in stops, added to whatever the level sets */
+	float GetBrightness() const { return Brightness; }
+
+	void SetLookSensitivity(float Multiplier);
+	void SetMasterVolume(float Volume);
+	void SetVoiceVolume(float Volume);
+	void SetBrightness(float Stops);
+
+	/** Master volume on the audio device, and voice volume on the voice sound class */
+	void ApplySoundSettings();
+
+	/** Brightness on a character's camera, the view this machine sees through when it looks from that character */
+	void ApplyBrightness(class AFacilityCharacter* Character) const;
+
+	/** Brightness on every character's camera in the world (the local player may be watching any of them) */
+	void ApplyBrightnessToAll() const;
 
 	/** Push-to-talk key held or released */
 	void SetTalkKeyHeld(APlayerController* PlayerController, bool bHeld);
@@ -116,6 +140,21 @@ protected:
 	/** Below this level the microphone sends nothing */
 	UPROPERTY(config)
 	float NoiseGate = 0.04f;
+
+	/** Multiplies mouse and stick look */
+	UPROPERTY(config)
+	float LookSensitivity = 1.0f;
+
+	UPROPERTY(config)
+	float MasterVolume = 1.0f;
+
+	/** Teammates' voices */
+	UPROPERTY(config)
+	float VoiceVolume = 1.0f;
+
+	/** Exposure offset in stops */
+	UPROPERTY(config)
+	float Brightness = 0.0f;
 
 	/** Whether a capture device could be opened at all */
 	bool bMicrophoneFound = false;

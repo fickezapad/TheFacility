@@ -3,11 +3,13 @@
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityLook.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -19,12 +21,74 @@ AFacilityPickup::AFacilityPickup()
 	RootComponent = Mesh;
 	Mesh->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
 
-	// visible placeholder until real art exists
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	if (SphereMesh.Succeeded())
 	{
 		Mesh->SetStaticMesh(SphereMesh.Object);
 		Mesh->SetRelativeScale3D(FVector(0.3f));
+	}
+	// rendered by the look pieces instead; the sphere still blocks the interaction trace
+	Mesh->SetHiddenInGame(true);
+
+	Look = FacilityLook::AddPiece(this, TEXT("Look"), Mesh, NAME_None, TEXT("Sphere"), TEXT("MI_Char_Item"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.18f), true);
+	LookDetail = FacilityLook::AddPiece(this, TEXT("LookDetail"), Mesh, NAME_None, TEXT("Cube"), TEXT("MI_Char_ItemBrass"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.01f), true);
+	for (const TCHAR* ShapeName : { TEXT("Sphere"), TEXT("Cube"), TEXT("Cylinder") })
+	{
+		LookAssets.Add(ShapeName, FacilityLook::Shape(ShapeName));
+	}
+	for (const TCHAR* MaterialName : { TEXT("MI_Char_Item"), TEXT("MI_Char_ItemBrass"), TEXT("MI_Motel_Ledger"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Glass") })
+	{
+		LookAssets.Add(MaterialName, FacilityLook::Material(MaterialName));
+	}
+}
+
+void AFacilityPickup::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ApplyLook();
+}
+
+void AFacilityPickup::OnRep_GrantedKeyId()
+{
+	ApplyLook();
+}
+
+void AFacilityPickup::ApplyLook()
+{
+	// positions are in the hidden sphere's space (scaled 0.3: 10 units = 3 cm); sizes are world scale
+	const auto Dress = [this](UStaticMeshComponent* Piece, const TCHAR* ShapeName, const TCHAR* MaterialName, const FVector& Location, const FRotator& Rotation, const FVector& Scale)
+	{
+		Piece->SetStaticMesh(Cast<UStaticMesh>(LookAssets.FindRef(ShapeName)));
+		Piece->SetMaterial(0, Cast<UMaterialInterface>(LookAssets.FindRef(MaterialName)));
+		Piece->SetRelativeLocationAndRotation(Location, Rotation);
+		Piece->SetRelativeScale3D(Scale);
+		Piece->SetVisibility(!bTaken);
+	};
+
+	static const FName FuseId(TEXT("Fuse"));
+	static const FName MasterKeyId(TEXT("MasterKey"));
+	if (GrantedKeyId == FuseId)
+	{
+		// a cartridge fuse lying on its side: a glass body between brass caps
+		Dress(Look, TEXT("Cylinder"), TEXT("MI_Char_ItemBrass"), FVector::ZeroVector, FRotator(90.0f, 0.0f, 0.0f), FVector(0.07f, 0.07f, 0.24f));
+		Dress(LookDetail, TEXT("Cylinder"), TEXT("MI_Retro_Glass"), FVector::ZeroVector, FRotator(90.0f, 0.0f, 0.0f), FVector(0.085f, 0.085f, 0.15f));
+	}
+	else if (GrantedKeyId == MasterKeyId)
+	{
+		// a motel key on its big red diamond fob
+		Dress(Look, TEXT("Cube"), TEXT("MI_Char_ItemBrass"), FVector(25.0f, 0.0f, 0.0f), FRotator::ZeroRotator, FVector(0.14f, 0.03f, 0.012f));
+		Dress(LookDetail, TEXT("Cube"), TEXT("MI_Motel_Ledger"), FVector(-15.0f, 0.0f, 0.0f), FRotator(0.0f, 45.0f, 0.0f), FVector(0.08f, 0.08f, 0.02f));
+	}
+	else if (GrantedKeyId == AFacilityCharacter::FlashCameraId)
+	{
+		// a boxy instant camera, lens forward
+		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.12f, 0.2f, 0.12f));
+		Dress(LookDetail, TEXT("Cylinder"), TEXT("MI_Retro_Glass"), FVector(22.0f, 0.0f, 0.0f), FRotator(90.0f, 0.0f, 0.0f), FVector(0.07f, 0.07f, 0.05f));
+	}
+	else
+	{
+		Dress(Look, TEXT("Sphere"), TEXT("MI_Char_Item"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.18f));
+		Dress(LookDetail, TEXT("Cube"), TEXT("MI_Char_ItemBrass"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.01f));
 	}
 }
 
@@ -34,6 +98,7 @@ void AFacilityPickup::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 
 	DOREPLIFETIME(AFacilityPickup, bTaken);
 	DOREPLIFETIME_CONDITION(AFacilityPickup, DisplayName, COND_InitialOnly);
+	DOREPLIFETIME_CONDITION(AFacilityPickup, GrantedKeyId, COND_InitialOnly);
 }
 
 void AFacilityPickup::InitDropped(FName KeyId, const FText& Name, FName InSignatureId, FName InZoneId)
@@ -44,6 +109,7 @@ void AFacilityPickup::InitDropped(FName KeyId, const FText& Name, FName InSignat
 	}
 
 	GrantedKeyId = KeyId;
+	ApplyLook();
 	DisplayName = Name;
 	SignatureId = InSignatureId;
 	ZoneId = InZoneId;

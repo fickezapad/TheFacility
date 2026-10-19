@@ -201,8 +201,11 @@ void UFacilityVoiceComponent::ReportVoice(float Amplitude)
 	++NumVoiceReports;
 	UE_LOG(LogTheFacility, Verbose, TEXT("Voice: %s at %.2f carries %.0f cm"), *GetNameSafe(Character), Amplitude, Radius);
 
-	// the Tenant hears it; the Facility counts it on its own, smaller budget
-	AFacilityTenant::ReportNoise(GetWorld(), Character->GetPawnViewLocation(), Radius, Character, false);
+	// the Tenant hears it; the Facility counts it on its own, smaller budget. From a hiding place the voice comes out
+	// through its door, which the Tenant can walk up to: it can never path to the inside of a closet or under a bed
+	const AFacilityHidingSpot* HiddenIn = Character->GetHidingSpot();
+	const FVector From = HiddenIn ? HiddenIn->GetSpotPoint(60.0f, 100.0f) : Character->GetPawnViewLocation();
+	AFacilityTenant::ReportNoise(GetWorld(), From, Radius, Character, false);
 	if (AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
 	{
 		Director->HearVoice(Radius);

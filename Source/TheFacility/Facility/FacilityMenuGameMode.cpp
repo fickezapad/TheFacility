@@ -2,6 +2,8 @@
 
 #include "Facility/FacilityMenuGameMode.h"
 #include "Facility/FacilityGameInstance.h"
+#include "Camera/CameraActor.h"
+#include "EngineUtils.h"
 #include "TheFacility.h"
 
 AFacilityMenuGameMode::AFacilityMenuGameMode()
@@ -17,6 +19,13 @@ void AFacilityMenuPlayerController::BeginPlay()
 	if (!IsLocalController())
 	{
 		return;
+	}
+
+	// the menu map is the motel at night, seen from the lot through its camera
+	for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
+	{
+		SetViewTarget(*It);
+		break;
 	}
 
 	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())

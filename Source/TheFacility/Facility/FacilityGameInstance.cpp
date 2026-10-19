@@ -9,7 +9,13 @@
 #include "VoiceModule.h"
 #include "Interfaces/VoiceInterface.h"
 #include "OnlineSubsystemUtils.h"
+#include "AudioDevice.h"
+#include "Camera/CameraComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/PostProcessVolume.h"
+#include "EngineUtils.h"
+#include "Sound/AudioSettings.h"
+#include "Sound/SoundClass.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/NetDriver.h"
 #include "Engine/World.h"
@@ -64,6 +70,8 @@ void UFacilityGameInstance::Init()
 		MenuKeyProcessor = MakeShared<FFacilityMenuKeyProcessor>(this);
 		FSlateApplication::Get().RegisterInputPreProcessor(MenuKeyProcessor);
 	}
+
+	ApplySoundSettings();
 }
 
 void UFacilityGameInstance::Shutdown()
@@ -322,6 +330,18 @@ void UFacilityGameInstance::TogglePauseMenu(APlayerController* PlayerController)
 	AddMenuWidget(PlayerController, PauseMenu.ToSharedRef(), 20);
 }
 
+void UFacilityGameInstance::ShowMenuSettings(bool bShow)
+{
+	if (PauseMenu.IsValid())
+	{
+		StaticCastSharedPtr<SFacilityPauseMenu>(PauseMenu)->ShowSettings(bShow);
+	}
+	else if (MainMenu.IsValid())
+	{
+		StaticCastSharedPtr<SFacilityMainMenu>(MainMenu)->ShowSettings(bShow);
+	}
+}
+
 void UFacilityGameInstance::HidePauseMenu()
 {
 	if (!PauseMenu.IsValid())
@@ -355,9 +375,90 @@ void UFacilityGameInstance::SetNoiseGate(float Threshold)
 	SaveConfig();
 }
 
+void UFacilityGameInstance::SetLookSensitivity(float Multiplier)
+{
+	LookSensitivity = FMath::Clamp(Multiplier, 0.2f, 3.0f);
+	SaveConfig();
+}
+
+void UFacilityGameInstance::SetMasterVolume(float Volume)
+{
+	MasterVolume = FMath::Clamp(Volume, 0.0f, 1.0f);
+	ApplySoundSettings();
+	SaveConfig();
+}
+
+void UFacilityGameInstance::SetVoiceVolume(float Volume)
+{
+	VoiceVolume = FMath::Clamp(Volume, 0.0f, 2.0f);
+	ApplySoundSettings();
+	SaveConfig();
+}
+
+void UFacilityGameInstance::SetBrightness(float Stops)
+{
+	Brightness = FMath::Clamp(Stops, -1.5f, 2.0f);
+	ApplyBrightnessToAll();
+	SaveConfig();
+}
+
+void UFacilityGameInstance::ApplySoundSettings()
+{
+	if (GEngine)
+	{
+		if (FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice())
+		{
+			AudioDevice->SetTransientPrimaryVolume(MasterVolume);
+		}
+	}
+
+	// remote voices play through the engine's VoiP sound class (Config/DefaultEngine.ini: SC_Voice)
+	const FSoftObjectPath VoiceClassPath = GetDefault<UAudioSettings>()->VoiPSoundClass;
+	if (USoundClass* VoiceClass = VoiceClassPath.IsValid() ? Cast<USoundClass>(VoiceClassPath.TryLoad()) : nullptr)
+	{
+		VoiceClass->Properties.Volume = VoiceVolume;
+	}
+}
+
+void UFacilityGameInstance::ApplyBrightness(AFacilityCharacter* Character) const
+{
+	UCameraComponent* Camera = Character ? Character->GetFirstPersonCameraComponent() : nullptr;
+	UWorld* World = GetWorld();
+	if (!Camera || !World)
+	{
+		return;
+	}
+
+	// the camera's settings win over the level's, so start from the level's own exposure bias
+	float LevelBias = 0.0f;
+	for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+	{
+		if (It->bUnbound && It->bEnabled && It->Settings.bOverride_AutoExposureBias)
+		{
+			LevelBias = It->Settings.AutoExposureBias;
+			break;
+		}
+	}
+	Camera->PostProcessSettings.bOverride_AutoExposureBias = true;
+	Camera->PostProcessSettings.AutoExposureBias = LevelBias + Brightness;
+	Camera->PostProcessBlendWeight = 1.0f;
+}
+
+void UFacilityGameInstance::ApplyBrightnessToAll() const
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AFacilityCharacter> It(World); It; ++It)
+		{
+			ApplyBrightness(*It);
+		}
+	}
+}
+
 void UFacilityGameInstance::ApplyVoiceSettings(APlayerController* PlayerController)
 {
 	ProbeMicrophone();
+	ApplySoundSettings();
 
 	// the engine's own capture reads these each time it gathers microphone audio
 	if (IConsoleVariable* Gain = IConsoleManager::Get().FindConsoleVariable(TEXT("voice.MicInputGain")))

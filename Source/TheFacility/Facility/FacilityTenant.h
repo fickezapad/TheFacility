@@ -53,6 +53,9 @@ class THEFACILITY_API AFacilityTenant : public ACharacter
 	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UAudioComponent> CryAudio;
 
+	/** How far the body leans forward over its feet, in degrees */
+	static constexpr float HunchDegrees = 16.0f;
+
 protected:
 
 	UPROPERTY(EditAnywhere, Category="Tenant|Sound")

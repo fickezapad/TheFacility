@@ -3,6 +3,7 @@
 #include "Facility/FacilityFlicker.h"
 #include "Facility/FacilityGameState.h"
 #include "Components/LightComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Engine/World.h"
 
@@ -56,6 +57,11 @@ void AFacilityFlicker::SetLit(bool bInLit)
 		for (UTextRenderComponent* Text : Texts)
 		{
 			Text->SetVisibility(bLit);
+		}
+		TInlineComponentArray<UStaticMeshComponent*> Meshes(Target);
+		for (UStaticMeshComponent* Mesh : Meshes)
+		{
+			Mesh->SetScalarParameterValueOnMaterials(TEXT("Emissive"), bLit ? LitEmissive : LitEmissive * 0.05f);
 		}
 	}
 }

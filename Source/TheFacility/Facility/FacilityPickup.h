@@ -19,8 +19,19 @@ class THEFACILITY_API AFacilityPickup : public AActor, public IFacilityInteracta
 {
 	GENERATED_BODY()
 
+	/** What is interacted with: an invisible sphere, a comfortable size to aim at, whatever the item looks like */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UStaticMeshComponent> Mesh;
+
+	/** What it looks like: two low-poly pieces, shaped and dressed by item (see ApplyLook) */
+	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UStaticMeshComponent> Look;
+
+	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UStaticMeshComponent> LookDetail;
+
+	UPROPERTY()
+	TMap<FName, TObjectPtr<UObject>> LookAssets;
 
 protected:
 
@@ -28,8 +39,8 @@ protected:
 	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category="Pickup")
 	FText DisplayName = NSLOCTEXT("Facility", "DefaultPickupName", "Object");
 
-	/** Key given to the player who takes this. None gives no key */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Pickup")
+	/** Key given to the player who takes this. None gives no key. Replicated so dropped items look right everywhere */
+	UPROPERTY(EditAnywhere, ReplicatedUsing=OnRep_GrantedKeyId, BlueprintReadOnly, Category="Pickup")
 	FName GrantedKeyId;
 
 	/** If set, this is an Offering: taking it signs this id into the Facility ledger */
@@ -78,6 +89,14 @@ protected:
 
 	UFUNCTION()
 	void OnRep_Taken();
+
+	UFUNCTION()
+	void OnRep_GrantedKeyId();
+
+	/** Shapes the look for the item: a fuse, a motel key on its fob, a flash camera, or a plain trinket */
+	void ApplyLook();
+
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 	/** Called on every machine when the pickup is taken. Use for sounds and effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Pickup")
