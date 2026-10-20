@@ -13,8 +13,11 @@ void AFacilityGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(AFacilityGameState, bPowerRestored);
 	DOREPLIFETIME(AFacilityGameState, PowerRestoredBy);
 	DOREPLIFETIME(AFacilityGameState, FuseCarrier);
+	DOREPLIFETIME(AFacilityGameState, GateKeyCarrier);
 	DOREPLIFETIME(AFacilityGameState, RunState);
 	DOREPLIFETIME(AFacilityGameState, RunSeed);
+	DOREPLIFETIME(AFacilityGameState, PeakAttention);
+	DOREPLIFETIME(AFacilityGameState, PeakTier);
 	DOREPLIFETIME(AFacilityGameState, RunStartTime);
 	DOREPLIFETIME(AFacilityGameState, RunEndTime);
 	DOREPLIFETIME(AFacilityGameState, EscapedNames);

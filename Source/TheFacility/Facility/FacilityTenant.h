@@ -162,6 +162,9 @@ public:
 
 	const FTransform& GetHomeTransform() const { return HomeTransform; }
 
+	/** Server only, at the start of a night: the room it never checked out of, this time */
+	void MoveHome(const FTransform& Home);
+
 	/** Server only. Called by the AI */
 	void SetTenantState(ETenantState NewState);
 

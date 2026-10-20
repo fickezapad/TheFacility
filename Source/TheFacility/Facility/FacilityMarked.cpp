@@ -306,6 +306,16 @@ void AFacilityMarked::Hasten(const FString& Why)
 	UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s, it will return faster (withdraw %.1f s)"), *Why, WithdrawTime * WithdrawScale);
 }
 
+void AFacilityMarked::MoveHome(const FTransform& Home)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	HomeTransform = FTransform(Home.Rotator(), Home.GetLocation());
+	SetActorTransform(HomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+}
+
 void AFacilityMarked::ShutDown()
 {
 	if (!HasAuthority() || bShutDown)

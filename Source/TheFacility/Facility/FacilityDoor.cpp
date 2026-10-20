@@ -75,6 +75,24 @@ void AFacilityDoor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(AFacilityDoor, bHeldShut);
 }
 
+void AFacilityDoor::LockForNight()
+{
+	if (!HasAuthority() || bBroken)
+	{
+		return;
+	}
+
+	if (bOpen)
+	{
+		bOpen = false;
+		OpenAlpha = 0.0f;
+		Hinge->SetRelativeRotation(FRotator::ZeroRotator);
+		UpdateNavigationBlocking();
+	}
+	bLocked = true;
+	bHeldShut = false;
+}
+
 void AFacilityDoor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -105,6 +123,19 @@ void AFacilityDoor::Tick(float DeltaSeconds)
 	if (bArrived)
 	{
 		SetActorTickEnabled(false);
+		UpdateNavigationBlocking();
+	}
+}
+
+void AFacilityDoor::UpdateNavigationBlocking()
+{
+	// a closed door never cuts the doorway (AI opens doors itself), but a slab standing open blocks whatever it swung
+	// into, a walkway or a room, so paths go round it instead of pushing into it. Only while it rests fully open, so a
+	// swing doesn't rebuild navigation every frame. Navigation lives on the server
+	const bool bBlocks = bOpen && OpenAlpha >= 1.0f;
+	if (HasAuthority() && DoorMesh->CanEverAffectNavigation() != bBlocks)
+	{
+		DoorMesh->SetCanEverAffectNavigation(bBlocks);
 	}
 }
 
@@ -132,6 +163,8 @@ void AFacilityDoor::StartSwing()
 	// each machine animates and hears its own swing
 	FacilityAudio::PlayAt(this, CreakSound, GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), 1500.0f, 0.8f, FMath::FRandRange(0.9f, 1.1f));
 	SetActorTickEnabled(true);
+	// closing: the slab stops blocking at once
+	UpdateNavigationBlocking();
 }
 
 void AFacilityDoor::Open(const APawn* Opener)

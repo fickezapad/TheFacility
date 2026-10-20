@@ -8,6 +8,8 @@
 #if !UE_BUILD_SHIPPING
 
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityContainer.h"
+#include "Facility/FacilityExit.h"
 #include "Facility/FacilityDirector.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityFuseBox.h"
@@ -166,13 +168,36 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQATake(
 		}
 
 		AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
-		for (TActorIterator<AFacilityPickup> It(World); It && Player; ++It)
+		const FName Item(*Args[0]);
+		const auto TryTake = [World, Player, Item]()
 		{
-			if (It->GetGrantedKeyId() == FName(*Args[0]) && IFacilityInteractable::Execute_CanInteract(*It, Player))
+			for (TActorIterator<AFacilityPickup> It(World); It && Player; ++It)
 			{
-				UE_LOG(LogTheFacility, Display, TEXT("facility.QA.Take: %s takes %s"), *Player->GetName(), *It->GetName());
-				IFacilityInteractable::Execute_Interact(*It, Player);
-				return;
+				if (It->GetGrantedKeyId() == Item && IFacilityInteractable::Execute_CanInteract(*It, Player))
+				{
+					UE_LOG(LogTheFacility, Display, TEXT("facility.QA.Take: %s takes %s"), *Player->GetName(), *It->GetName());
+					IFacilityInteractable::Execute_Interact(*It, Player);
+					return true;
+				}
+			}
+			return false;
+		};
+		if (TryTake())
+		{
+			return;
+		}
+
+		// on a night with containers the item is hidden in one: search it (at once, from wherever the player is), then take it
+		for (TActorIterator<AFacilityContainer> It(World); It && Player; ++It)
+		{
+			if (!It->IsSearched() && It->GetContentKeyId() == Item)
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("facility.QA.Take: %s finds %s in %s"), *Player->GetName(), *Args[0], *It->GetName());
+				It->CompleteSearchNow(Player);
+				if (TryTake())
+				{
+					return;
+				}
 			}
 		}
 		UE_LOG(LogTheFacility, Warning, TEXT("facility.QA.Take: no player or no pickup granting %s"), *Args[0]);
@@ -505,6 +530,81 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 		{
 			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
 			Check(Line, Args[3], Player && Player->HasKey(FName(*Args[2])) ? TEXT("1") : TEXT("0"));
+		}
+		else if (What == TEXT("Gate"))
+		{
+			// Chained, Unchained (the chain is off, or there never was one) or Open
+			const AFacilityExit* Exit = FindActor<AFacilityExit>(World, TEXT("Exit"));
+			const FString State = !Exit ? TEXT("Missing") : Exit->IsOpen() ? TEXT("Open") : Exit->IsChainedShut() ? TEXT("Chained") : TEXT("Unchained");
+			Check(Line, Args[1], State);
+		}
+		else if (What == TEXT("Searched") && Args.Num() >= 3)
+		{
+			const AFacilityContainer* Container = FindActor<AFacilityContainer>(World, Args[1]);
+			Check(Line, Args[2], Container ? (Container->IsSearched() ? TEXT("1") : TEXT("0")) : TEXT("Missing"));
+		}
+		else if (What == TEXT("SearchedCount"))
+		{
+			int32 Count = 0;
+			for (TActorIterator<AFacilityContainer> It(World); It; ++It)
+			{
+				Count += It->IsSearched() ? 1 : 0;
+			}
+			Check(Line, Args[1], FString::FromInt(Count));
+		}
+		else if (What == TEXT("Containers"))
+		{
+			int32 Count = 0;
+			for (TActorIterator<AFacilityContainer> It(World); It; ++It)
+			{
+				++Count;
+			}
+			Check(Line, Args[1], FString::FromInt(Count));
+		}
+		else if (What == TEXT("LockedRooms") || What == TEXT("BrokenRooms"))
+		{
+			// rooms (door lock groups) with a door still locked by the night, or with a door broken in
+			TSet<FName> Rooms;
+			for (TActorIterator<AFacilityDoor> It(World); It; ++It)
+			{
+				const bool bCounts = What == TEXT("LockedRooms") ? It->IsLocked() && !It->IsHeldShut() && !It->IsBroken() : It->IsBroken();
+				if (bCounts && !It->GetLockGroup().IsNone())
+				{
+					Rooms.Add(It->GetLockGroup());
+				}
+			}
+			Check(Line, Args[1], FString::FromInt(Rooms.Num()));
+		}
+		else if (What == TEXT("Found") && Args.Num() >= 3)
+		{
+			// Yes: lying out after a search, or carried. Hidden: still in a container. NotTonight: the night didn't hide one
+			const FName Item(*Args[1]);
+			FString State = TEXT("NotTonight");
+			for (TActorIterator<AFacilityContainer> It(World); It; ++It)
+			{
+				if (It->GetContentKeyId() == Item)
+				{
+					State = TEXT("Hidden");
+				}
+			}
+			for (TActorIterator<AFacilityPickup> It(World); It; ++It)
+			{
+				if (It->GetGrantedKeyId() == Item)
+				{
+					State = TEXT("Yes");
+				}
+			}
+			for (TActorIterator<AFacilityCharacter> It(World); It; ++It)
+			{
+				if (It->HasKey(Item))
+				{
+					State = TEXT("Yes");
+				}
+			}
+			// "Yes|NotTonight" accepts either
+			TArray<FString> Accepted;
+			Args[2].ParseIntoArray(Accepted, TEXT("|"));
+			Check(Line, Accepted.Contains(State) ? State : Args[2], State);
 		}
 		else if (What == TEXT("Near") && Args.Num() >= 5)
 		{

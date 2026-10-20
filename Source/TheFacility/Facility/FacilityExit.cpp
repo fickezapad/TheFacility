@@ -1,19 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityExit.h"
+#include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityTenant.h"
 #include "Facility/FacilityLook.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "TheFacility.h"
 
 AFacilityExit::AFacilityExit()
 {
+	bReplicates = true;
+
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	RootComponent = Root;
 
@@ -36,8 +41,9 @@ AFacilityExit::AFacilityExit()
 		FacilityLook::AddPiece(this, Side == 0 ? TEXT("Look_PostLeft") : TEXT("Look_PostRight"), Root, NAME_None, TEXT("Cylinder"), TEXT("MI_Retro_Metal"),
 			FVector(0.0f, Side == 0 ? -158.0f : 158.0f, 165.0f), FRotator::ZeroRotator, FVector(0.16f, 0.16f, 3.3f));
 	}
-	FacilityLook::AddPiece(this, TEXT("Look_Chain"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector(-60.0f, 0.0f, -5.0f), FRotator::ZeroRotator, FVector(0.04f, 0.05f, 0.5f), true);
-	FacilityLook::AddPiece(this, TEXT("Look_Padlock"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Brass"), FVector(-70.0f, 0.0f, -14.0f), FRotator::ZeroRotator, FVector(0.04f, 0.08f, 0.1f), true);
+	ChainPieces.Add(FacilityLook::AddPiece(this, TEXT("Look_Chain"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector(-60.0f, 0.0f, -5.0f), FRotator::ZeroRotator, FVector(0.04f, 0.05f, 0.5f), true));
+	ChainPieces.Add(FacilityLook::AddPiece(this, TEXT("Look_Padlock"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Brass"), FVector(-70.0f, 0.0f, -14.0f), FRotator::ZeroRotator, FVector(0.04f, 0.08f, 0.1f), true));
+	ChainPieces.Add(FacilityLook::AddPiece(this, TEXT("Look_ChainCross"), Gate, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector(-60.0f, 0.0f, -5.0f), FRotator(0.0f, 0.0f, 90.0f), FVector(0.04f, 0.05f, 0.5f), true));
 
 	// the zone is only ever tested against player locations, so it needs no collision
 	ExitZone = CreateDefaultSubobject<UBoxComponent>(TEXT("ExitZone"));
@@ -84,9 +90,32 @@ void AFacilityExit::TryBindToGameState()
 	}
 }
 
+void AFacilityExit::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AFacilityExit, bUnchained);
+	DOREPLIFETIME(AFacilityExit, UnchainedBy);
+}
+
 void AFacilityExit::HandlePowerRestored()
 {
-	if (bOpen)
+	bPowerSeen = true;
+	UpdateGate();
+}
+
+void AFacilityExit::OnRep_Unchained()
+{
+	for (UStaticMeshComponent* Piece : ChainPieces)
+	{
+		Piece->SetVisibility(!bUnchained);
+	}
+	UpdateGate();
+}
+
+void AFacilityExit::UpdateGate()
+{
+	if (bOpen || !bPowerSeen || IsChainedShut())
 	{
 		return;
 	}
@@ -95,6 +124,40 @@ void AFacilityExit::HandlePowerRestored()
 	Gate->SetVisibility(false, true);
 	Gate->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	UE_LOG(LogTheFacility, Log, TEXT("%s: gate open on the %s"), *GetName(), GetNetMode() == NM_Client ? TEXT("client") : TEXT("server"));
+}
+
+bool AFacilityExit::CanInteract_Implementation(APawn* InstigatorPawn) const
+{
+	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
+	return IsChainedShut() && Character && Character->IsStanding() && Character->HasKey(AFacilityCharacter::GateKeyId);
+}
+
+FText AFacilityExit::GetInteractPrompt_Implementation(APawn* InstigatorPawn) const
+{
+	if (!IsChainedShut())
+	{
+		return bOpen ? FText::GetEmpty() : NSLOCTEXT("Facility", "GateNoPower", "The gate's motor is dead. Restore the power");
+	}
+	return CanInteract_Implementation(InstigatorPawn)
+		? NSLOCTEXT("Facility", "GateUnchain", "Unlock the chain")
+		: NSLOCTEXT("Facility", "GateChained", "Chained and padlocked. Find the gate key");
+}
+
+void AFacilityExit::Interact_Implementation(APawn* InstigatorPawn)
+{
+	AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
+	if (!HasAuthority() || !CanInteract_Implementation(InstigatorPawn) || !Character->RemoveKey(AFacilityCharacter::GateKeyId))
+	{
+		return;
+	}
+
+	const AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
+	UnchainedBy = GameState ? GameState->MakeSignerName(Character->GetPlayerState()) : Character->GetName();
+	bUnchained = true;
+	OnRep_Unchained();
+	// the chain coming off rattles across the lot
+	AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), UnchainNoiseRadius, Character);
+	UE_LOG(LogTheFacility, Log, TEXT("%s unchains %s"), *UnchainedBy, *GetName());
 }
 
 bool AFacilityExit::IsInExitZone(const FVector& Location) const

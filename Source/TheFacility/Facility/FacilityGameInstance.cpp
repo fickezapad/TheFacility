@@ -375,6 +375,21 @@ void UFacilityGameInstance::SetNoiseGate(float Threshold)
 	SaveConfig();
 }
 
+void UFacilityGameInstance::MarkHintSeen(int32 Hint)
+{
+	if (!HasSeenHint(Hint))
+	{
+		SeenHints |= 1u << Hint;
+		SaveConfig();
+	}
+}
+
+void UFacilityGameInstance::ResetHints()
+{
+	SeenHints = 0;
+	SaveConfig();
+}
+
 void UFacilityGameInstance::SetLookSensitivity(float Multiplier)
 {
 	LookSensitivity = FMath::Clamp(Multiplier, 0.2f, 3.0f);

@@ -28,6 +28,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fuse Box")
 	FName RequiredItemId = TEXT("Fuse");
 
+	/** Where it is, for the objective line: "in the laundry" */
+	UPROPERTY(EditAnywhere, Category="Fuse Box")
+	FString WhereLabel;
+
 	/** Fuses it takes before the power comes back. Each one is fitted separately, by whoever carries it */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fuse Box", meta=(ClampMin=1))
 	int32 FusesRequired = 1;
@@ -57,6 +61,9 @@ public:
 	AFacilityFuseBox();
 
 	int32 GetFusesRequired() const { return FusesRequired; }
+
+	/** Where it is, for the HUD: "in the laundry". Empty says nothing */
+	const FString& GetWhereLabel() const { return WhereLabel; }
 
 	int32 GetFusesFitted() const { return FusesFitted; }
 

@@ -59,6 +59,12 @@ public:
 	/** Item id of the flash camera */
 	static const FName FlashCameraId;
 
+	/** Item id of the key to the chain on the exit gate */
+	static const FName GateKeyId;
+
+	/** True while the local player holds the objectives key (Tab). Local only */
+	bool IsShowingObjectives() const { return bShowingObjectives; }
+
 protected:
 
 	/** Interact input action. If left empty, a default one bound to E and gamepad face button left is created at runtime */
@@ -312,6 +318,17 @@ protected:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoInteract();
 
+	/** Interact released: ends a held search */
+	void DoInteractEnd();
+
+	void DoObjectivesStart() { bShowingObjectives = true; }
+	void DoObjectivesEnd() { bShowingObjectives = false; }
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> ObjectivesAction;
+
+	bool bShowingObjectives = false;
+
 	void DoSprintStart();
 	void DoSprintEnd();
 	void DoSneakStart();
@@ -328,8 +345,15 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void Server_DebugRespawn();
 
+	/** Host only: another night, a new one or the same seed again */
 	UFUNCTION(Server, Reliable)
-	void Server_Restart();
+	void Server_Restart(bool bSameNight);
+
+	/** T on the end screen: the same night again */
+	void DoRestartSameNight();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> RestartSameAction;
 
 	UFUNCTION(Server, Reliable)
 	void Server_SetFlashlight(bool bOn);

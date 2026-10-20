@@ -2,15 +2,18 @@
 
 #include "Facility/FacilityHUD.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityContainer.h"
 #include "Facility/FacilityDirector.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityFuseBox.h"
+#include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityHidingSpot.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
+#include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
@@ -49,34 +52,54 @@ void AFacilityHUD::DrawObjective(const AFacilityGameState* GameState, const AFac
 		return;
 	}
 
+	const AFacilityExit* Exit = *ExitIt;
+
 	// how many fuses the box still needs, for maps where it takes more than one
 	int32 Missing = 1;
 	int32 Required = 1;
+	FString Where = TEXT("in the lobby");
 	if (TActorIterator<AFacilityFuseBox> BoxIt(GetWorld()); BoxIt)
 	{
 		Required = BoxIt->GetFusesRequired();
 		Missing = FMath::Max(Required - BoxIt->GetFusesFitted(), 0);
+		if (!BoxIt->GetWhereLabel().IsEmpty())
+		{
+			Where = BoxIt->GetWhereLabel();
+		}
 	}
 	const FString Progress = Required > 1 ? FString::Printf(TEXT(" (%d of %d fitted)"), Required - Missing, Required) : FString();
+	const bool bChained = Exit->IsChainedShut();
+	const APlayerState* KeyCarrier = GameState->GetGateKeyCarrier();
 
 	FString Objective;
-	if (GameState->IsPowerRestored())
+	if (GameState->IsPowerRestored() && !bChained)
 	{
-		Objective = TEXT("The power is back and the gate is open. Get out. Everyone still standing has to be through the gate.");
+		Objective = TEXT("The gate is open. Get out. Everyone still standing has to be through the gate.");
 	}
 	else if (Character && Character->HasKey(TEXT("Fuse")))
 	{
-		Objective = TEXT("Fit the fuse in the fuse box in the lobby.") + Progress;
+		Objective = FString::Printf(TEXT("Fit the fuse in the fuse box %s."), *Where) + Progress;
+	}
+	else if (Character && Character->HasKey(AFacilityCharacter::GateKeyId))
+	{
+		Objective = TEXT("You have the gate key. Unlock the chain on the gate by the road.");
+	}
+	else if (GameState->IsPowerRestored())
+	{
+		Objective = IsValid(KeyCarrier)
+			? FString::Printf(TEXT("The power is back, but the gate is chained. %s has the key."), *GameState->MakeSignerName(KeyCarrier))
+			: TEXT("The power is back, but the gate is chained. Find the gate key.");
 	}
 	else if (const APlayerState* Carrier = GameState->GetFuseCarrier(); IsValid(Carrier))
 	{
-		Objective = FString::Printf(TEXT("%s has a fuse. Get them to the fuse box in the lobby."), *GameState->MakeSignerName(Carrier)) + Progress;
+		Objective = FString::Printf(TEXT("%s has a fuse. Get them to the fuse box %s."), *GameState->MakeSignerName(Carrier), *Where) + Progress;
 	}
 	else
 	{
-		Objective = Missing > 1
-			? FString::Printf(TEXT("Restore the power. The fuse box in the lobby is missing %d fuses."), Missing)
-			: TEXT("Restore the power. The fuse box in the lobby is missing a fuse.") + Progress;
+		const FString Fuses = Missing > 1
+			? FString::Printf(TEXT("Restore the power: the fuse box %s is missing %d fuses."), *Where, Missing)
+			: FString::Printf(TEXT("Restore the power: the fuse box %s is missing a fuse."), *Where) + Progress;
+		Objective = bChained ? Fuses + TEXT(" The gate is chained, too.") : Fuses;
 	}
 
 	DrawCentered(Objective, Canvas->ClipX * 0.5f, 18.0f, FLinearColor(0.75f, 0.75f, 0.7f, 0.8f), GEngine->GetSmallFont());
@@ -140,14 +163,249 @@ void AFacilityHUD::DrawRunOver(const AFacilityGameState* GameState)
 			*Entry.SignerName, *Entry.SignatureId.ToString()), CenterX, Y, FLinearColor(0.85f, 0.75f, 0.75f), GEngine->GetSmallFont());
 		Y += 18.0f;
 	}
+	Y += 10.0f;
 	if (!GameState->GetPowerRestoredBy().IsEmpty())
 	{
 		DrawCentered(FString::Printf(TEXT("Power restored by %s"), *GameState->GetPowerRestoredBy()), CenterX, Y, FLinearColor(0.7f, 0.7f, 0.7f), GEngine->GetSmallFont());
 		Y += 18.0f;
 	}
+	for (TActorIterator<AFacilityExit> It(GetWorld()); It; ++It)
+	{
+		if (!It->GetUnchainedBy().IsEmpty())
+		{
+			DrawCentered(FString::Printf(TEXT("Gate unchained by %s"), *It->GetUnchainedBy()), CenterX, Y, FLinearColor(0.7f, 0.7f, 0.7f), GEngine->GetSmallFont());
+			Y += 18.0f;
+		}
+	}
+	if (AFacilityDirector::Get(GetWorld()) || GameState->GetPeakAttention() > 0)
+	{
+		DrawCentered(FString::Printf(TEXT("The Facility's attention peaked at %d (tier %d)"), GameState->GetPeakAttention(), GameState->GetPeakTier()),
+			CenterX, Y, FLinearColor(0.85f, 0.45f, 0.42f), GEngine->GetSmallFont());
+		Y += 18.0f;
+	}
 
-	DrawCentered(GetNetMode() == NM_Client ? TEXT("Waiting for the host to start another night") : TEXT("Press R for another night"),
+	DrawCentered(GetNetMode() == NM_Client ? TEXT("Waiting for the host to start another night")
+		: FString::Printf(TEXT("R   a new night          T   night %d again"), GameState->GetRunSeed()),
 		CenterX, Canvas->ClipY * 0.85f, FLinearColor(0.6f, 0.6f, 0.6f), GEngine->GetMediumFont());
+}
+
+void AFacilityHUD::DrawShadowed(const FString& Text, float X, float Y, const FLinearColor& Color, UFont* Font, float Scale)
+{
+	DrawText(Text, FLinearColor(0.0f, 0.0f, 0.0f, Color.A * 0.8f), X + 1.5f, Y + 1.5f, Font, Scale);
+	DrawText(Text, Color, X, Y, Font, Scale);
+}
+
+void AFacilityHUD::DrawObjectivesPanel(const AFacilityGameState* GameState, const AFacilityCharacter* Character)
+{
+	TActorIterator<AFacilityExit> ExitIt(GetWorld());
+	if (!ExitIt)
+	{
+		return;
+	}
+	const AFacilityExit* Exit = *ExitIt;
+
+	int32 Required = 1;
+	int32 Fitted = 0;
+	FString Where;
+	if (TActorIterator<AFacilityFuseBox> BoxIt(GetWorld()); BoxIt)
+	{
+		Required = BoxIt->GetFusesRequired();
+		Fitted = FMath::Min(BoxIt->GetFusesFitted(), Required);
+		Where = BoxIt->GetWhereLabel();
+	}
+
+	int32 Searched = 0;
+	int32 Containers = 0;
+	for (TActorIterator<AFacilityContainer> It(GetWorld()); It; ++It)
+	{
+		++Containers;
+		Searched += It->IsSearched() ? 1 : 0;
+	}
+	TSet<FName> LockedRooms;
+	for (TActorIterator<AFacilityDoor> It(GetWorld()); It; ++It)
+	{
+		if (It->IsLocked() && !It->IsHeldShut() && !It->GetLockGroup().IsNone())
+		{
+			LockedRooms.Add(It->GetLockGroup());
+		}
+	}
+
+	const bool bPower = GameState->IsPowerRestored();
+	const APlayerState* KeyCarrier = GameState->GetGateKeyCarrier();
+	FString KeyState = TEXT("not found yet");
+	if (!Exit->IsChainedShut())
+	{
+		KeyState = TEXT("used, the chain is off");
+	}
+	else if (Character->HasKey(AFacilityCharacter::GateKeyId))
+	{
+		KeyState = TEXT("you have it");
+	}
+	else if (IsValid(KeyCarrier))
+	{
+		KeyState = FString::Printf(TEXT("%s has it"), *GameState->MakeSignerName(KeyCarrier));
+	}
+
+	struct FLine { bool bDone; FString Text; };
+	TArray<FLine> Lines;
+	Lines.Add({ bPower, FString::Printf(TEXT("Fuses fitted: %d of %d%s"), Fitted, Required, Where.IsEmpty() ? TEXT("") : *(TEXT("   (fuse box ") + Where + TEXT(")"))) });
+	Lines.Add({ bPower, TEXT("Power restored") });
+	if (Containers > 0 || !Exit->IsChainedShut())
+	{
+		Lines.Add({ !Exit->IsChainedShut(), TEXT("Gate key: ") + KeyState });
+	}
+	Lines.Add({ Exit->IsOpen(), TEXT("The gate open") });
+	Lines.Add({ false, TEXT("Everyone still standing through the gate") });
+
+	const float X = 40.0f;
+	float Y = 64.0f;
+	const float Width = 430.0f;
+	const float Height = 40.0f + Lines.Num() * 22.0f + (Containers > 0 ? 50.0f : 0.0f);
+	DrawRect(FLinearColor(0.01f, 0.01f, 0.012f, 0.72f), X - 16.0f, Y - 14.0f, Width, Height);
+	DrawRect(FLinearColor(0.55f, 0.08f, 0.06f, 0.9f), X - 16.0f, Y - 14.0f, 3.0f, Height);
+	DrawShadowed(FString::Printf(TEXT("THE NIGHT   %d:%02d"), FMath::FloorToInt(GameState->GetRunTime() / 60.0f), FMath::FloorToInt(GameState->GetRunTime()) % 60),
+		X, Y, FLinearColor(0.82f, 0.80f, 0.74f), GEngine->GetMediumFont());
+	Y += 34.0f;
+	for (const FLine& Line : Lines)
+	{
+		DrawShadowed(Line.bDone ? TEXT("[x]") : TEXT("[ ]"), X, Y, Line.bDone ? FLinearColor(0.55f, 0.75f, 0.5f) : FLinearColor(0.6f, 0.58f, 0.54f), GEngine->GetSmallFont());
+		DrawShadowed(Line.Text, X + 32.0f, Y, Line.bDone ? FLinearColor(0.55f, 0.55f, 0.52f) : FLinearColor(0.88f, 0.84f, 0.72f), GEngine->GetSmallFont());
+		Y += 22.0f;
+	}
+	if (Containers > 0)
+	{
+		Y += 8.0f;
+		DrawShadowed(FString::Printf(TEXT("Searched %d of %d drawers, cabinets and carts"), Searched, Containers), X, Y, FLinearColor(0.6f, 0.58f, 0.54f), GEngine->GetSmallFont());
+		Y += 18.0f;
+		TArray<FString> Names;
+		for (const FName Room : LockedRooms)
+		{
+			Names.Add(Room.ToString().Replace(TEXT("Room"), TEXT("Room ")));
+		}
+		Names.Sort();
+		DrawShadowed(Names.IsEmpty() ? FString(TEXT("No rooms locked")) : TEXT("Locked: ") + FString::Join(Names, TEXT(", ")) + TEXT("   (the master key opens them)"),
+			X, Y, FLinearColor(0.6f, 0.58f, 0.54f), GEngine->GetSmallFont());
+	}
+}
+
+void AFacilityHUD::DrawSearchProgress(const AFacilityCharacter* Character)
+{
+	const UFacilityInteractionComponent* Interaction = Character->GetInteractionComponent();
+	const AFacilityContainer* Container = Interaction ? Cast<AFacilityContainer>(Interaction->GetFocusedActor()) : nullptr;
+	const float Progress = Container ? Container->GetSearchProgressFor(Character) : -1.0f;
+	if (Progress < 0.0f)
+	{
+		return;
+	}
+
+	const float Width = 160.0f;
+	const float X = Canvas->ClipX * 0.5f - Width * 0.5f;
+	const float Y = Canvas->ClipY * 0.5f + 70.0f;
+	DrawRect(FLinearColor(0.0f, 0.0f, 0.0f, 0.55f), X - 2.0f, Y - 2.0f, Width + 4.0f, 8.0f);
+	DrawRect(FLinearColor(0.82f, 0.80f, 0.74f, 0.85f), X, Y, Width * Progress, 4.0f);
+}
+
+void AFacilityHUD::QueueHint(int32 Hint)
+{
+	const UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>();
+	if (!GameInstance || GameInstance->HasSeenHint(Hint) || (HintsQueued & (1u << Hint)) != 0)
+	{
+		return;
+	}
+	HintsQueued |= 1u << Hint;
+	HintQueue.Add(Hint);
+}
+
+void AFacilityHUD::UpdateHints(const AFacilityGameState* GameState, const AFacilityCharacter* Character)
+{
+	// only on a night with a way out, while it lasts
+	if (!GameState || !GameState->IsRunInProgress() || !TActorIterator<AFacilityExit>(GetWorld()) || !Character->IsStanding())
+	{
+		return;
+	}
+
+	const float RunTime = GameState->GetRunTime();
+	if (RunTime > 3.0f)
+	{
+		QueueHint(HintSneak);
+	}
+	if (RunTime > 14.0f)
+	{
+		QueueHint(HintObjectives);
+	}
+	if (const UFacilityMovementComponent* Movement = Character->GetFacilityMovement(); Movement && Movement->IsSprinting())
+	{
+		QueueHint(HintSprint);
+	}
+
+	const UFacilityInteractionComponent* Interaction = Character->GetInteractionComponent();
+	const AActor* Focused = Interaction ? Interaction->GetFocusedActor() : nullptr;
+	if (Cast<AFacilityHidingSpot>(Focused))
+	{
+		QueueHint(HintHide);
+	}
+	if (Cast<AFacilityContainer>(Focused))
+	{
+		QueueHint(HintSearch);
+	}
+	if (const AFacilityPickup* Pickup = Cast<AFacilityPickup>(Focused); Pickup && Pickup->IsOffering())
+	{
+		QueueHint(HintOffering);
+	}
+	for (TActorIterator<AFacilityTenant> It(GetWorld()); It; ++It)
+	{
+		if (It->GetTenantState() != ETenantState::Dormant)
+		{
+			QueueHint(HintVoice);
+		}
+	}
+}
+
+void AFacilityHUD::DrawHint()
+{
+	if (HintQueue.IsEmpty())
+	{
+		return;
+	}
+
+	const float Now = GetWorld()->GetRealTimeSeconds();
+	if (HintShownAt < 0.0f)
+	{
+		HintShownAt = Now;
+		if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+		{
+			GameInstance->MarkHintSeen(HintQueue[0]);
+		}
+	}
+
+	const float Age = Now - HintShownAt;
+	if (Age > HintTime)
+	{
+		HintQueue.RemoveAt(0);
+		HintShownAt = -1.0f;
+		return;
+	}
+
+	static const TCHAR* const Texts[HintCount] = {
+		TEXT("Hold Ctrl to sneak. Footsteps carry here."),
+		TEXT("Running is loud. Things in this motel listen."),
+		TEXT("Closets and beds hide you, but not for long."),
+		TEXT("Hold E to search. Rummaging makes a little noise."),
+		TEXT("Taking this signs the register. The Facility notices what you take."),
+		TEXT("Something is awake. Your voice carries: it hears you talk."),
+		TEXT("Hold Tab to see what is left to do."),
+	};
+	const int32 Hint = HintQueue[0];
+	const float Alpha = FMath::Clamp(FMath::Min(Age / 0.5f, (HintTime - Age) / 1.2f), 0.0f, 1.0f);
+	const FString Text = Texts[FMath::Clamp(Hint, 0, HintCount - 1)];
+
+	float TextWidth = 0.0f, TextHeight = 0.0f;
+	GetTextSize(Text, TextWidth, TextHeight, GEngine->GetMediumFont());
+	const float CenterX = Canvas->ClipX * 0.5f;
+	const float Y = Canvas->ClipY * 0.66f;
+	DrawRect(FLinearColor(0.01f, 0.01f, 0.012f, 0.6f * Alpha), CenterX - TextWidth * 0.5f - 16.0f, Y - 6.0f, TextWidth + 32.0f, TextHeight + 12.0f);
+	DrawRect(FLinearColor(0.55f, 0.08f, 0.06f, 0.9f * Alpha), CenterX - TextWidth * 0.5f - 16.0f, Y - 6.0f, 3.0f, TextHeight + 12.0f);
+	DrawCentered(Text, CenterX, Y, FLinearColor(0.88f, 0.84f, 0.72f, Alpha), GEngine->GetMediumFont());
 }
 
 void AFacilityHUD::DrawHUD()
@@ -229,7 +487,18 @@ void AFacilityHUD::DrawHUD()
 	if (RunGameState && Character && !Character->IsRetained())
 	{
 		DrawObjective(RunGameState, Character);
+		if (Character->IsShowingObjectives())
+		{
+			DrawObjectivesPanel(RunGameState, Character);
+		}
 	}
+
+	if (Character && Character->IsLocallyControlled())
+	{
+		UpdateHints(RunGameState, Character);
+		DrawSearchProgress(Character);
+	}
+	DrawHint();
 
 	// the Facility's whisper: everyone sees it, it fades over a few seconds
 	if (const AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
@@ -270,6 +539,7 @@ void AFacilityHUD::DrawHUD()
 			const FString Name = AFacilityCharacter::GetItemName(Key).ToString().ToUpper();
 			const TCHAR* Use = Key == AFacilityCharacter::FlashCameraId ? TEXT("LMB  flash")
 				: Key == AFacilityDoor::MasterKeyId ? TEXT("LMB on a closed door  lock / unlock")
+				: Key == AFacilityCharacter::GateKeyId ? TEXT("E on the chained gate")
 				: TEXT("");
 			DrawText(Name, FLinearColor(0.0f, 0.0f, 0.0f, 0.7f), 25.5f, ItemY + 1.5f, GEngine->GetSmallFont());
 			DrawText(Name, FLinearColor(0.88f, 0.84f, 0.72f, 0.9f), 24.0f, ItemY, GEngine->GetSmallFont());

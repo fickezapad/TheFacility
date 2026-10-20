@@ -36,6 +36,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Door")
 	FName RequiredKeyId;
 
+	/** Doors of one room share a group (Room1..Room7). The night's seed picks which groups start locked; see AFacilityGameMode */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Door")
+	FName LockGroup;
+
 	/** Yaw of the hinge when fully open. Any angle works, including 180 and beyond; negative swings the other way */
 	UPROPERTY(EditAnywhere, Category="Door", meta=(Units="deg"))
 	float OpenYaw = 90.0f;
@@ -108,6 +112,11 @@ public:
 	/** Item id of the master key, which opens and locks every door */
 	static const FName MasterKeyId;
 
+	FName GetLockGroup() const { return LockGroup; }
+
+	/** Server only, at the start of a night: locks the door so only the master key (or the Tenant) gets it open */
+	void LockForNight();
+
 	/** True if this pawn may lock or unlock this door with the master key right now. Any machine */
 	bool CanToggleLock(const APawn* InstigatorPawn) const;
 
@@ -147,6 +156,9 @@ protected:
 
 	/** Starts ticking until the swing reaches the current open state */
 	void StartSwing();
+
+	/** Server: an open slab is an obstacle for navigation, a closed one is not */
+	void UpdateNavigationBlocking();
 
 	/** Server: opens the door, swinging away from Opener if that is enabled */
 	void Open(const APawn* Opener);

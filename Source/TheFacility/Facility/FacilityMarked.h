@@ -152,6 +152,9 @@ public:
 	/** Server only. The run is over: withdraw and never come back */
 	void ShutDown();
 
+	/** Server only, at the start of a night: where it waits this time, appears and withdraws to */
+	void MoveHome(const FTransform& Home);
+
 	/** Server only. Halves how long it stays away after a catch, like a hastening signature */
 	void Hasten(const FString& Why);
 

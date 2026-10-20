@@ -103,11 +103,24 @@ public:
 	const TArray<FString>& GetLeftBehindNames() const { return LeftBehindNames; }
 	const FString& GetPowerRestoredBy() const { return PowerRestoredBy; }
 
+	/** How far the Facility's attention got this night, and its highest tier. Set when the run ends */
+	int32 GetPeakAttention() const { return PeakAttention; }
+	int32 GetPeakTier() const { return PeakTier; }
+
+	/** Server only, as the run ends */
+	void SetFacilityPeak(int32 Attention, int32 Tier) { PeakAttention = Attention; PeakTier = Tier; }
+
 	/** The player carrying the fuse right now, if anyone */
 	APlayerState* GetFuseCarrier() const { return FuseCarrier; }
 
 	/** Server only */
 	void SetFuseCarrier(APlayerState* Carrier) { FuseCarrier = Carrier; }
+
+	/** The player carrying the gate key right now, if anyone */
+	APlayerState* GetGateKeyCarrier() const { return GateKeyCarrier; }
+
+	/** Server only */
+	void SetGateKeyCarrier(APlayerState* Carrier) { GateKeyCarrier = Carrier; }
 
 	/** Server only */
 	void StartRun(int32 Seed);
@@ -137,6 +150,9 @@ protected:
 	TObjectPtr<APlayerState> FuseCarrier;
 
 	UPROPERTY(Replicated)
+	TObjectPtr<APlayerState> GateKeyCarrier;
+
+	UPROPERTY(Replicated)
 	EFacilityRunState RunState = EFacilityRunState::InProgress;
 
 	UPROPERTY(Replicated)
@@ -154,6 +170,12 @@ protected:
 
 	UPROPERTY(Replicated)
 	TArray<FString> LeftBehindNames;
+
+	UPROPERTY(Replicated)
+	int32 PeakAttention = 0;
+
+	UPROPERTY(Replicated)
+	int32 PeakTier = 0;
 
 	/** True once OnPowerRestored has fired on this machine */
 	bool bPowerBroadcast = false;

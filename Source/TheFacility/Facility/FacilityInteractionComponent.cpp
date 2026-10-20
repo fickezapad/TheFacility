@@ -3,6 +3,7 @@
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityInteractable.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityContainer.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "Engine/World.h"
@@ -52,6 +53,20 @@ void UFacilityInteractionComponent::TryInteract()
 	{
 		// on a listen server host this runs locally straight away
 		Server_Interact(Target);
+	}
+}
+
+void UFacilityInteractionComponent::StopInteract()
+{
+	Server_StopInteract();
+}
+
+void UFacilityInteractionComponent::Server_StopInteract_Implementation()
+{
+	// a held search ends when the button does
+	for (TActorIterator<AFacilityContainer> It(GetWorld()); It; ++It)
+	{
+		It->StopSearch(Cast<APawn>(GetOwner()));
 	}
 }
 

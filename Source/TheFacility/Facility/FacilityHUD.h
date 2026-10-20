@@ -34,4 +34,32 @@ protected:
 
 	/** What the crew has to do next, while the run is on */
 	void DrawObjective(const class AFacilityGameState* GameState, const class AFacilityCharacter* Character);
+
+	/** Tab: the night's whole list, ticked off as it goes */
+	void DrawObjectivesPanel(const class AFacilityGameState* GameState, const class AFacilityCharacter* Character);
+
+	/** A bar under the crosshair while the local player holds a search */
+	void DrawSearchProgress(const class AFacilityCharacter* Character);
+
+	/** First-night hints: one short line at a time, each shown once per machine */
+	void UpdateHints(const class AFacilityGameState* GameState, const class AFacilityCharacter* Character);
+	void DrawHint();
+
+	/** Text with a drop shadow, left-aligned */
+	void DrawShadowed(const FString& Text, float X, float Y, const FLinearColor& Color, class UFont* Font, float Scale = 1.0f);
+
+	enum EHint : int32 { HintSneak, HintSprint, HintHide, HintSearch, HintOffering, HintVoice, HintObjectives, HintCount };
+
+	/** Queued hints, oldest first; the first one is on screen */
+	TArray<int32> HintQueue;
+
+	/** Local time the current hint went up */
+	float HintShownAt = -1.0f;
+
+	static constexpr float HintTime = 6.5f;
+
+	/** Hints this HUD has queued already this session, so a trigger fires only once */
+	uint32 HintsQueued = 0;
+
+	void QueueHint(int32 Hint);
 };

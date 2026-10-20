@@ -155,6 +155,16 @@ void AFacilityTenant::BeginPlay()
 	GameState->OnPowerRestored.AddUniqueDynamic(this, &AFacilityTenant::HandlePowerRestored);
 }
 
+void AFacilityTenant::MoveHome(const FTransform& Home)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	HomeTransform = FTransform(Home.Rotator(), Home.GetLocation());
+	SetActorTransform(HomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+}
+
 void AFacilityTenant::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(StateTimer);

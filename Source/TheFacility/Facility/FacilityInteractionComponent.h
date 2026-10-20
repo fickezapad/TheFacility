@@ -24,6 +24,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Interaction")
 	void TryInteract();
 
+	/** Called from input on the owning client when Interact is released: stops a held search */
+	void StopInteract();
+
+	/** QA, owning client: asks the server to use this actor, as if it were under the crosshair */
+	void InteractWith(AActor* Target) { if (Target) { Server_Interact(Target); } }
+
 	/** Actor currently under the crosshair. Only valid on the owning client */
 	UFUNCTION(BlueprintPure, Category="Interaction")
 	AActor* GetFocusedActor() const { return FocusedActor.Get(); }
@@ -50,6 +56,9 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void Server_Interact(AActor* Target);
+
+	UFUNCTION(Server, Reliable)
+	void Server_StopInteract();
 
 	/** Server side check that the pawn can actually reach and see the target */
 	bool ValidateTarget(AActor* Target) const;

@@ -430,9 +430,30 @@ void SFacilityPauseMenu::Construct(const FArguments& InArgs)
 		[
 			Rule(80.0f)
 		]
-		+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 0, 0, 24)
+		+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 0, 0, 16)
 		[
 			Label(LOCTEXT("PauseNote", "Nothing stops while this is open."), 11)
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 18)
+		[
+			// the controls card
+			SNew(SBorder)
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+			.BorderBackgroundColor(FLinearColor(0.05f, 0.05f, 0.05f, 0.85f))
+			.Padding(FMargin(14.0f, 10.0f))
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 18, 0)
+				[
+					SNew(STextBlock).Font(Font(10, TEXT("Bold"))).ColorAndOpacity(Paper)
+					.Text(LOCTEXT("ControlKeys", "WASD\nShift\nCtrl\nE\nhold E\nF\nLMB\nV\nTab\nEsc"))
+				]
+				+ SHorizontalBox::Slot().FillWidth(1.0f)
+				[
+					SNew(STextBlock).Font(Font(10)).ColorAndOpacity(Dim)
+					.Text(LOCTEXT("ControlUses", "move\nsprint (loud)\nsneak (quiet)\nopen, take, hide, help up\nsearch drawers, cabinets, carts\nflashlight\nuse the item you carry\npush to talk\nwhat is left to do tonight\nthis menu"))
+				]
+			]
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
 		[

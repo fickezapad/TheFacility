@@ -109,6 +109,15 @@ public:
 	/** True on the machine hosting the current run */
 	bool IsHosting() const;
 
+	/** The seed the next night starts with, handed over across the map reload. 0 = none */
+	void SetNextRunSeed(int32 Seed) { NextRunSeed = Seed; }
+	int32 ConsumeNextRunSeed() { const int32 Seed = NextRunSeed; NextRunSeed = 0; return Seed; }
+
+	/** First-night hints: which ones this machine has shown already. Saved in the user's Game.ini */
+	bool HasSeenHint(int32 Hint) const { return (SeenHints & (1u << Hint)) != 0; }
+	void MarkHintSeen(int32 Hint);
+	void ResetHints();
+
 	/** Escape or the gamepad's start button, seen before the game gets it. Returns true if a menu took it */
 	bool HandleMenuKey();
 
@@ -155,6 +164,12 @@ protected:
 	/** Exposure offset in stops */
 	UPROPERTY(config)
 	float Brightness = 0.0f;
+
+	/** Bit per first-night hint already shown on this machine */
+	UPROPERTY(config)
+	uint32 SeenHints = 0;
+
+	int32 NextRunSeed = 0;
 
 	/** Whether a capture device could be opened at all */
 	bool bMicrophoneFound = false;

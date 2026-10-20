@@ -36,6 +36,7 @@
 #include "TheFacility.h"
 
 const FName AFacilityCharacter::FlashCameraId(TEXT("FlashCamera"));
+const FName AFacilityCharacter::GateKeyId(TEXT("GateKey"));
 
 #if !UE_BUILD_SHIPPING
 /** QA: BugItGo needs cheats, which clients don't have. This moves the local player's own character on any machine */
@@ -204,6 +205,7 @@ void AFacilityCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	if (EnhancedInputComponent)
 	{
 		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoInteract);
+		EnhancedInputComponent->BindAction(InteractAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoInteractEnd);
 	}
 
 	SetupRunInput(EnhancedInputComponent, Subsystem);
@@ -230,6 +232,8 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 	FlashlightAction = NewObject<UInputAction>(this, TEXT("IA_Flashlight_Default"));
 	UseItemAction = NewObject<UInputAction>(this, TEXT("IA_UseItem_Default"));
 	RestartAction = NewObject<UInputAction>(this, TEXT("IA_Restart_Default"));
+	ObjectivesAction = NewObject<UInputAction>(this, TEXT("IA_Objectives_Default"));
+	RestartSameAction = NewObject<UInputAction>(this, TEXT("IA_RestartSame_Default"));
 
 	RunMappingContext = NewObject<UInputMappingContext>(this, TEXT("IMC_Run_Default"));
 	RunMappingContext->MapKey(SprintAction, EKeys::LeftShift);
@@ -244,6 +248,9 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 	RunMappingContext->MapKey(UseItemAction, EKeys::LeftMouseButton);
 	RunMappingContext->MapKey(UseItemAction, EKeys::Gamepad_RightTrigger);
 	RunMappingContext->MapKey(RestartAction, EKeys::R);
+	RunMappingContext->MapKey(ObjectivesAction, EKeys::Tab);
+	RunMappingContext->MapKey(RestartSameAction, EKeys::T);
+	RunMappingContext->MapKey(ObjectivesAction, EKeys::Gamepad_Special_Left);
 
 	if (Subsystem)
 	{
@@ -261,6 +268,9 @@ void AFacilityCharacter::SetupRunInput(UEnhancedInputComponent* EnhancedInputCom
 		EnhancedInputComponent->BindAction(FlashlightAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoToggleFlashlight);
 		EnhancedInputComponent->BindAction(UseItemAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoUseItem);
 		EnhancedInputComponent->BindAction(RestartAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoRestart);
+		EnhancedInputComponent->BindAction(ObjectivesAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoObjectivesStart);
+		EnhancedInputComponent->BindAction(RestartSameAction, ETriggerEvent::Started, this, &AFacilityCharacter::DoRestartSameNight);
+		EnhancedInputComponent->BindAction(ObjectivesAction, ETriggerEvent::Completed, this, &AFacilityCharacter::DoObjectivesEnd);
 	}
 }
 
@@ -390,6 +400,12 @@ void AFacilityCharacter::DoInteract()
 	{
 		InteractionComponent->TryInteract();
 	}
+}
+
+void AFacilityCharacter::DoInteractEnd()
+{
+	// letting go stops a search that is still going
+	InteractionComponent->StopInteract();
 }
 
 void AFacilityCharacter::DoSprintStart()
@@ -605,11 +621,20 @@ void AFacilityCharacter::DoRestart()
 	const AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
 	if (GameState && !GameState->IsRunInProgress())
 	{
-		Server_Restart();
+		Server_Restart(false);
 	}
 }
 
-void AFacilityCharacter::Server_Restart_Implementation()
+void AFacilityCharacter::DoRestartSameNight()
+{
+	const AFacilityGameState* GameState = GetWorld()->GetGameState<AFacilityGameState>();
+	if (GameState && !GameState->IsRunInProgress())
+	{
+		Server_Restart(true);
+	}
+}
+
+void AFacilityCharacter::Server_Restart_Implementation(bool bSameNight)
 {
 	const APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC || !PC->IsLocalController())
@@ -620,7 +645,7 @@ void AFacilityCharacter::Server_Restart_Implementation()
 
 	if (AFacilityGameMode* GameMode = GetWorld()->GetAuthGameMode<AFacilityGameMode>())
 	{
-		GameMode->RestartRun();
+		GameMode->RestartRun(bSameNight);
 	}
 }
 
@@ -671,6 +696,15 @@ void AFacilityCharacter::UpdateFuseCarrier()
 	{
 		GameState->SetFuseCarrier(nullptr);
 	}
+
+	if (HeldKeys.Contains(GateKeyId))
+	{
+		GameState->SetGateKeyCarrier(Mine);
+	}
+	else if (GameState->GetGateKeyCarrier() == Mine)
+	{
+		GameState->SetGateKeyCarrier(nullptr);
+	}
 }
 
 FText AFacilityCharacter::GetItemName(FName KeyId)
@@ -686,6 +720,10 @@ FText AFacilityCharacter::GetItemName(FName KeyId)
 	if (KeyId == AFacilityDoor::MasterKeyId)
 	{
 		return NSLOCTEXT("Facility", "ItemMasterKey", "Master key");
+	}
+	if (KeyId == GateKeyId)
+	{
+		return NSLOCTEXT("Facility", "ItemGateKey", "Gate key");
 	}
 	return FText::FromName(KeyId);
 }

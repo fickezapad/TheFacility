@@ -6,7 +6,9 @@
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityHUD.h"
+#include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityNight.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
 #include "Engine/World.h"
@@ -23,14 +25,14 @@ static TAutoConsoleVariable<int32> CVarFacilitySeed(
 	0,
 	TEXT("Seed for the next run's placement. 0 = random. A ?Seed= URL option takes precedence"));
 
-static FAutoConsoleCommandWithWorld CmdFacilityRestart(
+static FAutoConsoleCommandWithWorldAndArgs CmdFacilityRestart(
 	TEXT("facility.Restart"),
-	TEXT("Host only: starts the run over on the same map"),
-	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	TEXT("Host only: starts another night on the same map, a new one or (facility.Restart same) this night's seed again"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		if (AFacilityGameMode* GameMode = World ? World->GetAuthGameMode<AFacilityGameMode>() : nullptr)
 		{
-			GameMode->RestartRun();
+			GameMode->RestartRun(Args.IsValidIndex(0) && Args[0] == TEXT("same"));
 		}
 		else
 		{
@@ -48,7 +50,15 @@ void AFacilityGameMode::InitGame(const FString& MapName, const FString& Options,
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
 
-	RunSeed = UGameplayStatics::GetIntOption(Options, TEXT("Seed"), 0);
+	// a seed handed over by "another night" wins; then the URL; then facility.Seed; then chance
+	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	{
+		RunSeed = GameInstance->ConsumeNextRunSeed();
+	}
+	if (RunSeed == 0)
+	{
+		RunSeed = UGameplayStatics::GetIntOption(Options, TEXT("Seed"), 0);
+	}
 	if (RunSeed == 0)
 	{
 		RunSeed = CVarFacilitySeed.GetValueOnGameThread();
@@ -69,6 +79,7 @@ void AFacilityGameMode::StartPlay()
 	}
 
 	ApplySeededPlacement();
+	ApplyNightPlan();
 
 	// the Facility only answers on maps with a way out: the test maps without an exit stay as they were
 	if (TActorIterator<AFacilityExit>(GetWorld()) && !AFacilityDirector::Get(GetWorld()))
@@ -130,6 +141,15 @@ void AFacilityGameMode::ApplySeededPlacement()
 	}
 }
 
+void AFacilityGameMode::ApplyNightPlan()
+{
+	const FacilityNight::FSite Site = FacilityNight::GatherSite(GetWorld());
+	if (Site.IsNight())
+	{
+		FacilityNight::Apply(GetWorld(), FacilityNight::Plan(RunSeed, Site), Site);
+	}
+}
+
 void AFacilityGameMode::EvaluateRun()
 {
 	AFacilityGameState* FacilityGameState = GetGameState<AFacilityGameState>();
@@ -177,8 +197,8 @@ void AFacilityGameMode::EvaluateRun()
 		return;
 	}
 
-	// escaped: the gate is open and everyone still standing is through it, for a moment
-	bool bAllStandingOut = FacilityGameState->IsPowerRestored();
+	// escaped: the gate is open (power, and the chain off if it has one) and everyone still standing is through it, for a moment
+	bool bAllStandingOut = FacilityGameState->IsPowerRestored() && Exit->IsOpen();
 	int32 NumStanding = 0;
 	for (const AFacilityCharacter* Character : Players)
 	{
@@ -217,6 +237,11 @@ void AFacilityGameMode::FinishRun(EFacilityRunState Outcome, const TArray<FStrin
 		return;
 	}
 
+	if (const AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
+	{
+		// attention only ever grows, so where it ended is how far it got
+		FacilityGameState->SetFacilityPeak(Director->GetAttention(), Director->GetTier());
+	}
 	FacilityGameState->EndRun(Outcome, Escaped, LeftBehind);
 
 	for (TActorIterator<AFacilityMarked> It(GetWorld()); It; ++It)
@@ -233,7 +258,7 @@ void AFacilityGameMode::FinishRun(EFacilityRunState Outcome, const TArray<FStrin
 	}
 }
 
-void AFacilityGameMode::RestartRun()
+void AFacilityGameMode::RestartRun(bool bSameNight)
 {
 	if (bRestarting)
 	{
@@ -244,6 +269,13 @@ void AFacilityGameMode::RestartRun()
 	GetWorldTimerManager().ClearTimer(EvaluateTimer);
 	UE_LOG(LogTheFacility, Log, TEXT("Run: restarting the night"));
 
-	// reloads the current map for the host and every client; the new run rolls a new seed
+	// the seed rides across the reload in the game instance: this one again, or a fresh one
+	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	{
+		GameInstance->SetNextRunSeed(bSameNight ? RunSeed : FMath::RandRange(1, 999999));
+	}
+	UE_LOG(LogTheFacility, Log, TEXT("Run: %s"), bSameNight ? TEXT("the same night again") : TEXT("a new night"));
+
+	// reloads the current map for the host and every client
 	GetWorld()->ServerTravel(TEXT("?restart"));
 }

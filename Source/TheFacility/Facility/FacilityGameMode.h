@@ -24,8 +24,8 @@ public:
 
 	AFacilityGameMode();
 
-	/** Server: starts the night over on the same map, for everyone */
-	void RestartRun();
+	/** Server: starts another night on the same map, for everyone. bSameNight replays this night's seed */
+	void RestartRun(bool bSameNight = false);
 
 protected:
 
@@ -53,6 +53,9 @@ protected:
 
 	/** Keeps one pickup per placement group, chosen by the run seed, and removes the others */
 	void ApplySeededPlacement();
+
+	/** On maps with containers: plans this night from the seed (locked rooms, creature starts, hidden items) and applies it */
+	void ApplyNightPlan();
 
 	/** Checks for an escape or a loss */
 	void EvaluateRun();
