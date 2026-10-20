@@ -7,7 +7,9 @@
 #include "Facility/FacilityInteractable.h"
 #include "FacilityContainer.generated.h"
 
+class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
+class UFacilityClueComponent;
 
 UENUM(BlueprintType)
 enum class EFacilityContainerKind : uint8
@@ -45,6 +47,26 @@ class THEFACILITY_API AFacilityContainer : public AActor, public IFacilityIntera
 
 	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UStaticMeshComponent> Handle;
+
+	/** A thin pale strip along the top of the front that glows faintly until it is searched: what can be searched reads at a glance */
+	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UStaticMeshComponent> Trim;
+
+	/** The hum or jingle of what is hidden inside, for whoever is close */
+	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UFacilityClueComponent> Clue;
+
+	/** Per-container copies of the front and trim materials, so one can light up when aimed at */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> DrawerMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TrimMaterial;
+
+	bool bHighlighted = false;
+
+	/** The front material's own tint, dimmed once searched */
+	FLinearColor FrontTint = FLinearColor::White;
 
 	/** Shapes and materials by kind, loaded once */
 	UPROPERTY()
@@ -92,6 +114,10 @@ protected:
 	FName ContentSignatureId;
 	FName ContentZoneId;
 
+	/** What it gives away to someone close (a fuse's hum, the gate key's jingle). Set by the server with the contents */
+	UPROPERTY(ReplicatedUsing=OnRep_ClueItem)
+	FName ClueItem;
+
 	/** How far the drawer is out, 0..1, animated on every machine */
 	float OpenAlpha = 0.0f;
 
@@ -104,6 +130,15 @@ public:
 	FName GetArea() const { return Area; }
 
 	bool IsSearched() const { return bSearched; }
+
+	/** Local: the player here is aiming at it */
+	void SetLocalHighlight(bool bOn);
+
+	/** Any machine: the item whose clue it gives off, None if silent */
+	FName GetClueItem() const { return ClueItem; }
+
+	/** QA, any machine: true while this machine plays its clue */
+	bool IsGivingClue() const;
 
 	/** Server only: what the night hid here */
 	FName GetContentKeyId() const { return ContentKeyId; }
@@ -153,4 +188,10 @@ protected:
 	/** Everyone nearby hears the rummaging start */
 	UFUNCTION()
 	void OnRep_Searcher();
+
+	UFUNCTION()
+	void OnRep_ClueItem();
+
+	/** Trim glow and front brightness for searched / aimed at */
+	void UpdateGlow();
 };

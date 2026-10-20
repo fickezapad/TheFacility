@@ -25,6 +25,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Marked|Senses", meta=(ClampMin=0, Units="cm"))
 	float SightRange = 2500.0f;
 
+	/** How far it can see a mark whose flashlight is off: the beam is what gives you away in the dark */
+	UPROPERTY(EditAnywhere, Category="Marked|Senses", meta=(ClampMin=0, Units="cm"))
+	float DarkSightRange = 600.0f;
+
+	/** A sneaking mark is hidden from it by anything solid this close to them, between them and it, at crouching height */
+	UPROPERTY(EditAnywhere, Category="Marked|Senses", meta=(ClampMin=0, Units="cm"))
+	float CoverDistance = 150.0f;
+
+	UPROPERTY(EditAnywhere, Category="Marked|Senses", meta=(ClampMin=0, Units="cm"))
+	float CoverHeight = 70.0f;
+
 	/** Half of its field of view */
 	UPROPERTY(EditAnywhere, Category="Marked|Senses", meta=(ClampMin=0, ClampMax=180, Units="deg"))
 	float SightHalfAngle = 75.0f;
@@ -99,6 +110,15 @@ protected:
 public:
 
 	AFacilityMarkedAIController();
+
+	/** QA, server: whether it can see this player right now, by the same test the hunt uses */
+	bool CanSeeForQA(const AFacilityCharacter* Target) const;
+
+	/** QA: why it does or doesn't: distance, facing, flashlight, cover, line of sight */
+	FString DescribeSightForQA(const AFacilityCharacter* Target) const;
+
+	/** Server: something solid is right in front of a sneaking player, between them and From */
+	bool IsInCover(const AFacilityCharacter* Target, const FVector& From) const;
 
 protected:
 

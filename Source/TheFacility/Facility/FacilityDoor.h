@@ -73,9 +73,13 @@ protected:
 	UPROPERTY(ReplicatedUsing=OnRep_Slammed, BlueprintReadOnly, Category="Door")
 	bool bHeldShut = false;
 
-	/** Hinges, on every open and close */
+	/** The latch and a low wooden groan as it swings open */
 	UPROPERTY(EditAnywhere, Category="Door|Sound")
 	TObjectPtr<class USoundBase> CreakSound;
+
+	/** The slab meeting the frame and the latch catching */
+	UPROPERTY(EditAnywhere, Category="Door|Sound")
+	TObjectPtr<class USoundBase> CloseSound;
 
 	/** Slammed and held by the Facility, or beaten down */
 	UPROPERTY(EditAnywhere, Category="Door|Sound")

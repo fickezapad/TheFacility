@@ -152,9 +152,17 @@ FacilityNight::FPlan FacilityNight::Plan(int32 Seed, const FSite& Site)
 		Plan.MarkedStart = Stream.RandRange(0, Site.MarkedStarts.Num() - 1);
 	}
 
-	// two rooms locked, never the Tenant's own
-	TArray<FName> Lockable = Site.LockGroups;
-	Lockable.Remove(Plan.TenantRoom);
+	// two rooms locked, never the Tenant's own, and only rooms with something in them to search: a locked room
+	// should be worth the master key (or worth waiting for the Tenant to break it)
+	TArray<FName> Lockable;
+	for (const FName Group : Site.LockGroups)
+	{
+		const bool bHasContainer = Site.Containers.ContainsByPredicate([Group](const AFacilityContainer* Container) { return Container->GetArea() == Group; });
+		if (bHasContainer && Group != Plan.TenantRoom)
+		{
+			Lockable.Add(Group);
+		}
+	}
 	Shuffle(Lockable, Stream);
 	for (int32 Index = 0; Index < FMath::Min(2, Lockable.Num()); ++Index)
 	{

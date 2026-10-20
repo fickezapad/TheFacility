@@ -226,8 +226,11 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAMenu(
 			else if (Args[1] == TEXT("Brightness")) { GameInstance->SetBrightness(Value); }
 			else if (Args[1] == TEXT("Master")) { GameInstance->SetMasterVolume(Value); }
 			else if (Args[1] == TEXT("Voice")) { GameInstance->SetVoiceVolume(Value); }
-			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN settings look %.2f brightness %.2f master %.2f voice %.2f"),
-				GameInstance->GetLookSensitivity(), GameInstance->GetBrightness(), GameInstance->GetMasterVolume(), GameInstance->GetVoiceVolume());
+			else if (Args[1] == TEXT("Effects")) { GameInstance->SetEffectsVolume(Value); }
+			else if (Args[1] == TEXT("Retro")) { GameInstance->SetRetroLevel(FMath::RoundToInt(Value)); }
+			UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN settings look %.2f brightness %.2f master %.2f voice %.2f effects %.2f retro %d"),
+				GameInstance->GetLookSensitivity(), GameInstance->GetBrightness(), GameInstance->GetMasterVolume(), GameInstance->GetVoiceVolume(),
+				GameInstance->GetEffectsVolume(), GameInstance->GetRetroLevel());
 		}
 		else if (Args[0] == TEXT("State"))
 		{

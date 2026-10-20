@@ -493,6 +493,25 @@ void AFacilityHUD::DrawHUD()
 		}
 	}
 
+	// what can be searched lights up while it is aimed at
+	AFacilityContainer* Aimed = nullptr;
+	if (Character && Character->IsLocallyControlled() && Character->GetInteractionComponent())
+	{
+		Aimed = Cast<AFacilityContainer>(Character->GetInteractionComponent()->GetFocusedActor());
+	}
+	if (HighlightedContainer.Get() != Aimed)
+	{
+		if (AFacilityContainer* Previous = HighlightedContainer.Get())
+		{
+			Previous->SetLocalHighlight(false);
+		}
+		if (Aimed)
+		{
+			Aimed->SetLocalHighlight(true);
+		}
+		HighlightedContainer = Aimed;
+	}
+
 	if (Character && Character->IsLocallyControlled())
 	{
 		UpdateHints(RunGameState, Character);
@@ -540,6 +559,7 @@ void AFacilityHUD::DrawHUD()
 			const TCHAR* Use = Key == AFacilityCharacter::FlashCameraId ? TEXT("LMB  flash")
 				: Key == AFacilityDoor::MasterKeyId ? TEXT("LMB on a closed door  lock / unlock")
 				: Key == AFacilityCharacter::GateKeyId ? TEXT("E on the chained gate")
+				: AFacilityCharacter::IsThrowable(Key) ? TEXT("LMB  throw: the crash draws it away")
 				: TEXT("");
 			DrawText(Name, FLinearColor(0.0f, 0.0f, 0.0f, 0.7f), 25.5f, ItemY + 1.5f, GEngine->GetSmallFont());
 			DrawText(Name, FLinearColor(0.88f, 0.84f, 0.72f, 0.9f), 24.0f, ItemY, GEngine->GetSmallFont());

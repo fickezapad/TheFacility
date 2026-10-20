@@ -222,6 +222,22 @@ AFacilityDoor* AFacilityTenantAIController::HandleDoorAhead()
 	{
 		Door = Cast<AFacilityDoor>(Hit.GetActor());
 	}
+	if (!Door)
+	{
+		// coming at a doorway at an angle the straight line slips past the slab and it presses on the frame: sweep its
+		// shoulders' width as well, so a door across its way still counts
+		FHitResult Swept;
+		if (GetWorld()->SweepSingleByChannel(Swept, Start, End, FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(40.0f), Params))
+		{
+			// only a door it is heading through, not one it walks past: the slab lies across its way (the door's X is
+			// the doorway's axis)
+			AFacilityDoor* SweptDoor = Cast<AFacilityDoor>(Swept.GetActor());
+			if (SweptDoor && FMath::Abs(FVector::DotProduct(Self->GetActorForwardVector(), SweptDoor->GetActorForwardVector())) > 0.5f)
+			{
+				Door = SweptDoor;
+			}
+		}
+	}
 
 	if (!Door || Door->IsOpen() || Door->IsBroken())
 	{

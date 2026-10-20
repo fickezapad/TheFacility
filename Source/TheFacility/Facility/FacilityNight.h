@@ -23,7 +23,7 @@ namespace FacilityNight
 	struct FSite
 	{
 		TArray<AFacilityContainer*> Containers;
-		/** Rooms whose doors can be locked for a night (the doors' LockGroup) */
+		/** Rooms whose doors can be locked for a night (the doors' LockGroup). Only those with a container get locked */
 		TArray<FName> LockGroups;
 		/** Target points tagged TenantStart or MarkedStart; a TenantStart's second tag is the room it is in */
 		TArray<AActor*> TenantStarts;

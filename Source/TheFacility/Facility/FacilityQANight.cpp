@@ -10,11 +10,14 @@
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityExit.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityFuseBox.h"
 #include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityInteractionComponent.h"
 #include "Facility/FacilityNight.h"
+#include "Facility/FacilityPickup.h"
+#include "Facility/FacilityThrown.h"
 #include "GameFramework/PlayerStart.h"
 #include "NavigationPath.h"
 #include "NavigationSystem.h"
@@ -327,6 +330,20 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAValidateNights(
 				Unreachable.Add(Start->GetName());
 			}
 		}
+		// tonight's things to throw, where the seed put them
+		int32 NumThrowables = 0;
+		for (TActorIterator<AFacilityPickup> It(World); It; ++It)
+		{
+			if (AFacilityCharacter::IsThrowable(It->GetGrantedKeyId()))
+			{
+				++NumThrowables;
+				if (PathLength(World, It->GetActorLocation(), Points.Start) < 0.0f)
+				{
+					Unreachable.Add(It->GetName());
+				}
+			}
+		}
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_NIGHT %d things to throw tonight"), NumThrowables);
 		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_CHECK %s NightReach expected nothing unreachable got [%s]"),
 			Unreachable.IsEmpty() ? TEXT("PASS") : TEXT("FAIL"), *FString::Join(Unreachable, TEXT(", ")));
 
@@ -561,6 +578,65 @@ static FAutoConsoleCommandWithWorld CmdQANoiseInLockedRoom(
 			}
 		}
 		UE_LOG(LogTheFacility, Warning, TEXT("facility.QA.NoiseInLockedRoom: no locked room with a container"));
+	}));
+
+static FAutoConsoleCommandWithWorld CmdQAClientState(
+	TEXT("facility.QA.NightSeen"),
+	TEXT("QA, any machine: what this machine sees of the night's clues and throws: containers giving off a clue, crashes heard, what the local player carries to throw"),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	{
+		int32 Clues = 0, Searched = 0, Containers = 0;
+		for (TActorIterator<AFacilityContainer> It(World); It; ++It)
+		{
+			++Containers;
+			Clues += It->IsGivingClue() ? 1 : 0;
+			Searched += It->IsSearched() ? 1 : 0;
+		}
+		const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+		const AFacilityCharacter* Character = PC ? Cast<AFacilityCharacter>(PC->GetPawn()) : nullptr;
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s containers=%d searched=%d clues=%d crashes_heard=%d carrying_throwable=%s"),
+			World && World->GetNetMode() == NM_Client ? TEXT("client") : TEXT("host"), Containers, Searched, Clues, AFacilityThrown::GetBreaksSeen(),
+			Character ? *Character->GetHeldThrowable().ToString() : TEXT("-"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQAThrowAt(
+	TEXT("facility.QA.ThrowAt"),
+	TEXT("QA, any machine: the local player throws the bottle or can it carries toward a point, through the real throw RPC. facility.QA.ThrowAt X Y Z"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		const APlayerController* PC = World && Args.Num() >= 3 ? World->GetFirstPlayerController() : nullptr;
+		AFacilityCharacter* Character = PC ? Cast<AFacilityCharacter>(PC->GetPawn()) : nullptr;
+		if (!Character)
+		{
+			return;
+		}
+		const FVector Target(FCString::Atof(*Args[0]), FCString::Atof(*Args[1]), FCString::Atof(*Args[2]));
+		UE_LOG(LogTheFacility, Display, TEXT("facility.QA.ThrowAt: %s throws its %s toward %s"), *Character->GetName(), *Character->GetHeldThrowable().ToString(), *Target.ToCompactString());
+		Character->ThrowToward(Target);
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQAFlashlight(
+	TEXT("facility.QA.Flashlight"),
+	TEXT("QA, host: turns a player's flashlight on or off, on the server and for everyone. facility.QA.Flashlight <Player> <1|0>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Flashlight")) && Args.Num() >= 2 ? GetPlayer(World, FCString::Atoi(*Args[0])) : nullptr;
+		if (Player)
+		{
+			Player->SetFlashlightForQA(FCString::Atoi(*Args[1]) != 0);
+		}
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQASneak(
+	TEXT("facility.QA.Sneak"),
+	TEXT("QA, host's own pawn: holds or lets go of sneak. facility.QA.Sneak <Player> <1|0>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Sneak")) && Args.Num() >= 2 ? GetPlayer(World, FCString::Atoi(*Args[0])) : nullptr;
+		if (Player && Player->IsLocallyControlled() && Player->GetFacilityMovement())
+		{
+			Player->GetFacilityMovement()->SetWantsToSneak(FCString::Atoi(*Args[1]) != 0);
+		}
 	}));
 
 static FAutoConsoleCommandWithWorld CmdQAResetHints(

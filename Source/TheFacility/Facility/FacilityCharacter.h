@@ -16,6 +16,7 @@ class UInputAction;
 class UInputMappingContext;
 class ULocalPlayer;
 class USpotLightComponent;
+class USoundBase;
 
 /** Where an item a player carries came from, so it can be dropped again as the same thing. Server only */
 struct FFacilityHeldItemInfo
@@ -61,6 +62,27 @@ public:
 
 	/** Item id of the key to the chain on the exit gate */
 	static const FName GateKeyId;
+
+	/** Things to throw: an empty bottle, a soda can. Carried one at a time, thrown with LMB */
+	static const FName BottleId;
+	static const FName CanId;
+
+	static bool IsThrowable(FName KeyId) { return KeyId == BottleId || KeyId == CanId; }
+
+	/** The bottle or can this player carries, or None */
+	FName GetHeldThrowable() const { return HasKey(BottleId) ? BottleId : HasKey(CanId) ? CanId : NAME_None; }
+
+	/** Owning client (QA as well): throws what it carries toward a point, through the server */
+	void ThrowToward(const FVector& Target);
+
+	/** QA, server: the flashlight on or off, as if the player had pressed F */
+	void SetFlashlightForQA(bool bOn) { bFlashlightOn = bOn; OnRep_Flashlight(); }
+
+	/** Which footstep this machine last played for this character: Sneak, Walk or Sprint. QA */
+	FName GetLastFootstep() const { return LastFootstep; }
+
+	/** Server: the player is sneaking right now (Ctrl) */
+	bool IsSneakingNow() const;
 
 	/** True while the local player holds the objectives key (Tab). Local only */
 	bool IsShowingObjectives() const { return bShowingObjectives; }
@@ -180,6 +202,23 @@ protected:
 
 	/** Server: time until the next footstep sound is reported */
 	float FootstepNoiseCooldown = 0.0f;
+
+	/** Footsteps everyone hears: one sound per gait, played on every machine from how fast the character moves */
+	UPROPERTY()
+	TObjectPtr<USoundBase> StepSneakSound;
+
+	UPROPERTY()
+	TObjectPtr<USoundBase> StepWalkSound;
+
+	UPROPERTY()
+	TObjectPtr<USoundBase> StepSprintSound;
+
+	float StepTimer = 0.0f;
+
+	FName LastFootstep;
+
+	/** Local, every machine: a footstep sound now and then while it walks */
+	void UpdateFootstepSound(float DeltaSeconds);
 
 	/** True if this pawn created InteractMappingContext itself, so it must also remove it */
 	bool bOwnsInteractMappingContext = false;
@@ -360,6 +399,10 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void Server_UseFlash();
+
+	/** Throws the carried bottle or can along Direction (the thrower's aim) */
+	UFUNCTION(Server, Reliable)
+	void Server_Throw(FVector_NetQuantizeNormal Direction);
 
 	/** Locks or unlocks a door with the master key. The server checks reach and that the door is closed */
 	UFUNCTION(Server, Reliable)

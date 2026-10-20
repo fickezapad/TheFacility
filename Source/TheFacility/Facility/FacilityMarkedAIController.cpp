@@ -7,6 +7,7 @@
 #include "Facility/FacilityMarked.h"
 #include "Facility/FacilityMovementComponent.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerState.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -241,9 +242,57 @@ bool AFacilityMarkedAIController::ThinkAboutHiddenMark(AFacilityMarked* Creature
 	return true;
 }
 
+bool AFacilityMarkedAIController::CanSeeForQA(const AFacilityCharacter* Target) const
+{
+	return Target && GetPawn() && CanSee(Target, FVector::Dist(GetPawn()->GetActorLocation(), Target->GetActorLocation()));
+}
+
+FString AFacilityMarkedAIController::DescribeSightForQA(const AFacilityCharacter* Target) const
+{
+	const APawn* Self = GetPawn();
+	if (!Target || !Self)
+	{
+		return TEXT("Missing");
+	}
+	const FVector ToTarget = Target->GetActorLocation() - Self->GetActorLocation();
+	return FString::Printf(TEXT("d %.0f, facing %.2f, light %d, sneak %d, cover %d, los %d, at %s"), ToTarget.Size(),
+		FVector::DotProduct(Self->GetActorForwardVector(), ToTarget.GetSafeNormal()), Target->IsFlashlightOn() ? 1 : 0, Target->IsSneakingNow() ? 1 : 0,
+		IsInCover(Target, Self->GetActorLocation()) ? 1 : 0, LineOfSightTo(Target) ? 1 : 0, *Self->GetActorLocation().ToCompactString());
+}
+
+bool AFacilityMarkedAIController::IsInCover(const AFacilityCharacter* Target, const FVector& From) const
+{
+	if (!Target || !Target->IsSneakingNow())
+	{
+		return false;
+	}
+
+	// crouched behind something: a short trace from the mark's chest, at crouching height, toward the creature
+	const float FloorZ = Target->GetActorLocation().Z - Target->GetSimpleCollisionHalfHeight();
+	const FVector Start(Target->GetActorLocation().X, Target->GetActorLocation().Y, FloorZ + CoverHeight);
+	FVector Toward = From - Start;
+	Toward.Z = 0.0f;
+	const FVector End = Start + Toward.GetSafeNormal() * CoverDistance;
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FacilityMarkedCover), false, Target);
+	Params.AddIgnoredActor(GetPawn());
+	for (TActorIterator<AFacilityCharacter> It(GetWorld()); It; ++It)
+	{
+		Params.AddIgnoredActor(*It);
+	}
+	return GetWorld()->LineTraceTestByChannel(Start, End, ECC_Visibility, Params);
+}
+
 bool AFacilityMarkedAIController::CanSee(const AFacilityCharacter* Target, float Distance) const
 {
-	if (Distance > SightRange)
+	// in the dark it only sees what is close; a lit flashlight shows from across the lot
+	if (Distance > (Target->IsFlashlightOn() ? SightRange : DarkSightRange))
+	{
+		return false;
+	}
+
+	// crouched behind a desk, a bed, a counter, a car
+	if (IsInCover(Target, GetPawn()->GetActorLocation()))
 	{
 		return false;
 	}

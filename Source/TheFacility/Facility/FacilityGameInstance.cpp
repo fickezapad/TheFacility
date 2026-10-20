@@ -13,6 +13,7 @@
 #include "Camera/CameraComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/PostProcessVolume.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Sound/AudioSettings.h"
 #include "Sound/SoundClass.h"
@@ -72,10 +73,12 @@ void UFacilityGameInstance::Init()
 	}
 
 	ApplySoundSettings();
+	PostLoadMapHandle = FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &UFacilityGameInstance::HandlePostLoadMap);
 }
 
 void UFacilityGameInstance::Shutdown()
 {
+	FCoreUObjectDelegates::PostLoadMapWithWorld.Remove(PostLoadMapHandle);
 	HidePauseMenu();
 	HideMainMenu();
 
@@ -410,6 +413,56 @@ void UFacilityGameInstance::SetVoiceVolume(float Volume)
 	SaveConfig();
 }
 
+void UFacilityGameInstance::SetEffectsVolume(float Volume)
+{
+	EffectsVolume = FMath::Clamp(Volume, 0.0f, 1.0f);
+	ApplySoundSettings();
+	SaveConfig();
+}
+
+void UFacilityGameInstance::SetRetroLevel(int32 Level)
+{
+	RetroLevel = FMath::Clamp(Level, 0, 2);
+	ApplyRetro(GetWorld());
+	SaveConfig();
+}
+
+void UFacilityGameInstance::ApplyRetro(UWorld* World)
+{
+	if (!World || World->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	// the motel's night volume carries M_Retro_PP (fat pixels, a 4x4 dither, few colour levels). The dither's dots
+	// are a step of the palette, so more levels make them finer: low keeps the fat pixels with a fine dither
+	UMaterialInterface* RetroBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Facility/Materials/M_Retro_PP.M_Retro_PP"));
+	if (!RetroBase)
+	{
+		return;
+	}
+	for (TActorIterator<APostProcessVolume> It(World); It; ++It)
+	{
+		for (FWeightedBlendable& Blendable : It->Settings.WeightedBlendables.Array)
+		{
+			UMaterialInterface* Current = Cast<UMaterialInterface>(Blendable.Object);
+			if (!Current || Current->GetBaseMaterial() != RetroBase->GetBaseMaterial())
+			{
+				continue;
+			}
+			UMaterialInstanceDynamic* Pass = Cast<UMaterialInstanceDynamic>(Current);
+			if (!Pass)
+			{
+				Pass = UMaterialInstanceDynamic::Create(Current, *It);
+				Blendable.Object = Pass;
+			}
+			Pass->SetScalarParameterValue(TEXT("PixelSize"), 2.0f);
+			Pass->SetScalarParameterValue(TEXT("Levels"), RetroLevel >= 2 ? 24.0f : 64.0f);
+			Blendable.Weight = RetroLevel > 0 ? 1.0f : 0.0f;
+		}
+	}
+}
+
 void UFacilityGameInstance::SetBrightness(float Stops)
 {
 	Brightness = FMath::Clamp(Stops, -1.5f, 2.0f);
@@ -432,6 +485,13 @@ void UFacilityGameInstance::ApplySoundSettings()
 	if (USoundClass* VoiceClass = VoiceClassPath.IsValid() ? Cast<USoundClass>(VoiceClassPath.TryLoad()) : nullptr)
 	{
 		VoiceClass->Properties.Volume = VoiceVolume;
+	}
+
+	// every generated sound plays through SC_SFX (Saved/QA/make_sounds.py assigns it)
+	USoundClass* EffectsClass = LoadObject<USoundClass>(nullptr, TEXT("/Game/Facility/Audio/SC_SFX.SC_SFX"));
+	if (EffectsClass)
+	{
+		EffectsClass->Properties.Volume = EffectsVolume;
 	}
 }
 

@@ -8,6 +8,7 @@
 #include "FacilityPickup.generated.h"
 
 class UStaticMeshComponent;
+class UFacilityClueComponent;
 
 /**
  *  Something a player can take: a key, a tool, or an Offering.
@@ -29,6 +30,10 @@ class THEFACILITY_API AFacilityPickup : public AActor, public IFacilityInteracta
 
 	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<UStaticMeshComponent> LookDetail;
+
+	/** A fuse lying out still hums, the gate key still jingles, until someone takes it */
+	UPROPERTY(VisibleAnywhere, Category="Components", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UFacilityClueComponent> Clue;
 
 	UPROPERTY()
 	TMap<FName, TObjectPtr<UObject>> LookAssets;
@@ -97,6 +102,8 @@ protected:
 	void ApplyLook();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
+
+	virtual void BeginPlay() override;
 
 	/** Called on every machine when the pickup is taken. Use for sounds and effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Pickup")

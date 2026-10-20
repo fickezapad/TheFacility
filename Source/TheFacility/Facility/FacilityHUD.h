@@ -62,4 +62,7 @@ protected:
 	uint32 HintsQueued = 0;
 
 	void QueueHint(int32 Hint);
+
+	/** The container lit up because the local player aims at it */
+	TWeakObjectPtr<class AFacilityContainer> HighlightedContainer;
 };

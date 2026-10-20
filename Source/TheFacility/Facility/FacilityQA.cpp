@@ -20,8 +20,12 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityThrown.h"
+#include "Facility/FacilityMarkedAIController.h"
 #include "Facility/FacilityVoiceComponent.h"
 #include "Camera/CameraActor.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Containers/Ticker.h"
 #include "NavigationPath.h"
 #include "NavigationSystem.h"
@@ -217,7 +221,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAGive(
 
 static FAutoConsoleCommandWithWorldAndArgs CmdQATeleport(
 	TEXT("facility.QA.Teleport"),
-	TEXT("QA, host: moves a player. facility.QA.Teleport <Player> X Y Z [Yaw]"),
+	TEXT("QA, host: moves a player. facility.QA.Teleport <Player> X Y Z [Yaw] [Pitch]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Teleport")) && Args.Num() >= 4 ? GetPlayer(World, ArgInt(Args, 0, 0)) : nullptr;
@@ -230,7 +234,8 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQATeleport(
 		Player->TeleportTo(FVector(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), ArgFloat(Args, 3, 0.0f)), Facing);
 		if (AController* Controller = Player->GetController())
 		{
-			Controller->SetControlRotation(Facing);
+			// the look can tilt too (negative pitch looks down), so a screenshot can aim at a drawer
+			Controller->SetControlRotation(FRotator(ArgFloat(Args, 5, 0.0f), Facing.Yaw, 0.0f));
 		}
 	}));
 
@@ -348,8 +353,16 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAPlaceCreature(
 		}
 		if (Creature)
 		{
-			const FVector Location(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), Creature->GetActorLocation().Z);
-			Creature->TeleportTo(Location, FRotator(0.0f, ArgFloat(Args, 3, 0.0f), 0.0f));
+			// a dormant creature has no collision: placed, it would fall through the floor, so it is pinned standing
+			ACharacter* Body = Cast<ACharacter>(Creature);
+			const bool bPinned = Body && !Creature->GetActorEnableCollision();
+			const FVector Location(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), bPinned ? 125.0f : Creature->GetActorLocation().Z);
+			Creature->TeleportTo(Location, FRotator(0.0f, ArgFloat(Args, 3, 0.0f), 0.0f), false, bPinned);
+			if (bPinned)
+			{
+				Body->GetCharacterMovement()->StopMovementImmediately();
+				Body->GetCharacterMovement()->DisableMovement();
+			}
 			if (APawn* Pawn = Cast<APawn>(Creature); Pawn && Pawn->GetController())
 			{
 				Pawn->GetController()->SetControlRotation(FRotator(0.0f, ArgFloat(Args, 3, 0.0f), 0.0f));
@@ -605,6 +618,45 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 			TArray<FString> Accepted;
 			Args[2].ParseIntoArray(Accepted, TEXT("|"));
 			Check(Line, Accepted.Contains(State) ? State : Args[2], State);
+		}
+		else if (What == TEXT("MarkedSees") && Args.Num() >= 3)
+		{
+			// by the same test its hunt uses: range (shorter in the dark), cover for a sneaking player, line of sight
+			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
+			TActorIterator<AFacilityMarked> It(World);
+			const AFacilityMarkedAIController* Brain = It ? Cast<AFacilityMarkedAIController>(It->GetController()) : nullptr;
+			const FString Seen = !Player || !Brain ? TEXT("Missing") : Brain->CanSeeForQA(Player) ? TEXT("1") : TEXT("0");
+			Check(Line, Args[2], Seen);
+			if (Brain && Player && !bQuiet)
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_STATE marked sight: %s"), *Brain->DescribeSightForQA(Player));
+			}
+		}
+		else if (What == TEXT("TenantNear") && Args.Num() >= 4)
+		{
+			TActorIterator<AFacilityTenant> It(World);
+			const float Distance = It ? FVector::Dist2D(It->GetActorLocation(), FVector(ArgFloat(Args, 1, 0.0f), ArgFloat(Args, 2, 0.0f), 0.0f)) : -1.0f;
+			Check(Line, TEXT("1"), It && Distance <= ArgFloat(Args, 3, 0.0f) ? TEXT("1") : FString::Printf(TEXT("0 (%.0f cm)"), Distance));
+		}
+		else if (What == TEXT("Footstep") && Args.Num() >= 3)
+		{
+			// which footstep this machine last played for that player
+			const AFacilityCharacter* Player = GetPlayer(World, ArgInt(Args, 1, 0));
+			Check(Line, Args[2], Player ? Player->GetLastFootstep().ToString() : TEXT("Missing"));
+		}
+		else if (What == TEXT("Throws"))
+		{
+			Check(Line, Args[1], FString::FromInt(AFacilityThrown::GetBreakCount()));
+		}
+		else if (What == TEXT("Clues"))
+		{
+			// containers giving off a fuse's hum or the key's jingle on this machine
+			int32 Count = 0;
+			for (TActorIterator<AFacilityContainer> It(World); It; ++It)
+			{
+				Count += It->IsGivingClue() ? 1 : 0;
+			}
+			Check(Line, Args[1], FString::FromInt(Count));
 		}
 		else if (What == TEXT("Near") && Args.Num() >= 5)
 		{

@@ -2,6 +2,7 @@
 
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityCharacter.h"
+#include "Facility/FacilityClue.h"
 #include "Facility/FacilityGameState.h"
 #include "Facility/FacilityLook.h"
 #include "Components/StaticMeshComponent.h"
@@ -20,6 +21,10 @@ AFacilityPickup::AFacilityPickup()
 	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
 	RootComponent = Mesh;
 	Mesh->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
+	// something small lying about never stops anyone (a bottle on the walkway used to stop the Tenant dead), and it
+	// doesn't cut the navmesh; it still blocks the interaction trace, so it can be aimed at and taken
+	Mesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	Mesh->SetCanEverAffectNavigation(false);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	if (SphereMesh.Succeeded())
@@ -32,11 +37,13 @@ AFacilityPickup::AFacilityPickup()
 
 	Look = FacilityLook::AddPiece(this, TEXT("Look"), Mesh, NAME_None, TEXT("Sphere"), TEXT("MI_Char_Item"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.18f), true);
 	LookDetail = FacilityLook::AddPiece(this, TEXT("LookDetail"), Mesh, NAME_None, TEXT("Cube"), TEXT("MI_Char_ItemBrass"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.01f), true);
+	Clue = CreateDefaultSubobject<UFacilityClueComponent>(TEXT("Clue"));
+	Clue->SetupAttachment(Mesh);
 	for (const TCHAR* ShapeName : { TEXT("Sphere"), TEXT("Cube"), TEXT("Cylinder") })
 	{
 		LookAssets.Add(ShapeName, FacilityLook::Shape(ShapeName));
 	}
-	for (const TCHAR* MaterialName : { TEXT("MI_Char_Item"), TEXT("MI_Char_ItemBrass"), TEXT("MI_Motel_Ledger"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Glass") })
+	for (const TCHAR* MaterialName : { TEXT("MI_Char_Item"), TEXT("MI_Char_ItemBrass"), TEXT("MI_Motel_Ledger"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Glass"), TEXT("MI_Retro_BottleGlass"), TEXT("MI_Retro_CanPaint") })
 	{
 		LookAssets.Add(MaterialName, FacilityLook::Material(MaterialName));
 	}
@@ -48,9 +55,16 @@ void AFacilityPickup::OnConstruction(const FTransform& Transform)
 	ApplyLook();
 }
 
+void AFacilityPickup::BeginPlay()
+{
+	Super::BeginPlay();
+	Clue->SetItem(bTaken ? NAME_None : GrantedKeyId);
+}
+
 void AFacilityPickup::OnRep_GrantedKeyId()
 {
 	ApplyLook();
+	Clue->SetItem(bTaken ? NAME_None : GrantedKeyId);
 }
 
 void AFacilityPickup::ApplyLook()
@@ -84,6 +98,18 @@ void AFacilityPickup::ApplyLook()
 		// a boxy instant camera, lens forward
 		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.12f, 0.2f, 0.12f));
 		Dress(LookDetail, TEXT("Cylinder"), TEXT("MI_Retro_Glass"), FVector(22.0f, 0.0f, 0.0f), FRotator(90.0f, 0.0f, 0.0f), FVector(0.07f, 0.07f, 0.05f));
+	}
+	else if (GrantedKeyId == AFacilityCharacter::BottleId)
+	{
+		// an empty bottle lying on its side: a green glass body and a neck
+		Dress(Look, TEXT("Cylinder"), TEXT("MI_Retro_BottleGlass"), FVector::ZeroVector, FRotator(90.0f, 0.0f, 0.0f), FVector(0.075f, 0.075f, 0.2f));
+		Dress(LookDetail, TEXT("Cylinder"), TEXT("MI_Retro_BottleGlass"), FVector(46.0f, 0.0f, 0.0f), FRotator(90.0f, 0.0f, 0.0f), FVector(0.03f, 0.03f, 0.09f));
+	}
+	else if (GrantedKeyId == AFacilityCharacter::CanId)
+	{
+		// a soda can standing up, a lid on top
+		Dress(Look, TEXT("Cylinder"), TEXT("MI_Retro_CanPaint"), FVector(0.0f, 0.0f, 10.0f), FRotator::ZeroRotator, FVector(0.065f, 0.065f, 0.12f));
+		Dress(LookDetail, TEXT("Cylinder"), TEXT("MI_Retro_Metal"), FVector(0.0f, 0.0f, 31.0f), FRotator::ZeroRotator, FVector(0.06f, 0.06f, 0.006f));
 	}
 	else
 	{
@@ -120,7 +146,9 @@ bool AFacilityPickup::CanInteract_Implementation(APawn* InstigatorPawn) const
 {
 	// hands are full: nobody carries two of the same thing
 	const AFacilityCharacter* Character = Cast<AFacilityCharacter>(InstigatorPawn);
-	return !bTaken && !(Character && !GrantedKeyId.IsNone() && Character->HasKey(GrantedKeyId));
+	// and one thing to throw at a time
+	const bool bHandsFull = Character && AFacilityCharacter::IsThrowable(GrantedKeyId) && Character->GetHeldThrowable() != NAME_None;
+	return !bTaken && !bHandsFull && !(Character && !GrantedKeyId.IsNone() && Character->HasKey(GrantedKeyId));
 }
 
 FText AFacilityPickup::GetInteractPrompt_Implementation(APawn* InstigatorPawn) const
@@ -129,6 +157,10 @@ FText AFacilityPickup::GetInteractPrompt_Implementation(APawn* InstigatorPawn) c
 	if (!bTaken && Character && !GrantedKeyId.IsNone() && Character->HasKey(GrantedKeyId))
 	{
 		return FText::Format(NSLOCTEXT("Facility", "AlreadyCarrying", "You already carry a {0}"), DisplayName);
+	}
+	if (!bTaken && Character && AFacilityCharacter::IsThrowable(GrantedKeyId) && Character->GetHeldThrowable() != NAME_None)
+	{
+		return NSLOCTEXT("Facility", "HandsFull", "Your hands are full: throw what you carry first (LMB)");
 	}
 	return FText::Format(NSLOCTEXT("Facility", "TakePrompt", "Take {0}"), DisplayName);
 }
@@ -165,6 +197,7 @@ void AFacilityPickup::OnRep_Taken()
 	{
 		Mesh->SetVisibility(false, true);
 		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Clue->SetItem(NAME_None);
 		BP_OnTaken();
 	}
 }

@@ -165,6 +165,24 @@ void SFacilitySettingsPanel::Construct(const FArguments& InArgs)
 				[Weak](float Value) { if (Weak.IsValid()) { Weak->SetMasterVolume(Value); } },
 				[Weak, Percent]() { return Percent(Weak.IsValid() ? Weak->GetMasterVolume() : 1.0f); })
 		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+		[
+			Slider(LOCTEXT("EffectsVolume", "Effects volume"),
+				[Weak]() { return Weak.IsValid() ? Weak->GetEffectsVolume() : 0.6f; },
+				[Weak](float Value) { if (Weak.IsValid()) { Weak->SetEffectsVolume(Value); } },
+				[Weak, Percent]() { return Percent(Weak.IsValid() ? Weak->GetEffectsVolume() : 0.6f); })
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+		[
+			Slider(LOCTEXT("RetroLevel", "Retro picture"),
+				[Weak]() { return Weak.IsValid() ? Weak->GetRetroLevel() / 2.0f : 0.5f; },
+				[Weak](float Value) { if (Weak.IsValid()) { Weak->SetRetroLevel(FMath::RoundToInt(Value * 2.0f)); } },
+				[Weak]()
+				{
+					const int32 Level = Weak.IsValid() ? Weak->GetRetroLevel() : 1;
+					return Level == 0 ? LOCTEXT("RetroOff", "Off") : Level == 1 ? LOCTEXT("RetroLow", "Low") : LOCTEXT("RetroFull", "Full");
+				})
+		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 20)
 		[
 			Slider(LOCTEXT("VoiceVolume", "Voice volume"),
@@ -451,7 +469,7 @@ void SFacilityPauseMenu::Construct(const FArguments& InArgs)
 				+ SHorizontalBox::Slot().FillWidth(1.0f)
 				[
 					SNew(STextBlock).Font(Font(10)).ColorAndOpacity(Dim)
-					.Text(LOCTEXT("ControlUses", "move\nsprint (loud)\nsneak (quiet)\nopen, take, hide, help up\nsearch drawers, cabinets, carts\nflashlight\nuse the item you carry\npush to talk\nwhat is left to do tonight\nthis menu"))
+					.Text(LOCTEXT("ControlUses", "move\nsprint (loud)\nsneak: quiet, and hidden behind cover\nopen, take, hide, help up\nsearch: a fuse hums, the key jingles\nflashlight: off, you are harder to see\nthrow a bottle or can / use your item\npush to talk\nwhat is left to do tonight\nthis menu"))
 				]
 			]
 		]

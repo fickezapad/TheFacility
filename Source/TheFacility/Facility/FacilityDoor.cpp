@@ -38,9 +38,11 @@ AFacilityDoor::AFacilityDoor()
 	// navigation runs through the doorway whether the door is open or not; AI opens doors itself
 	DoorMesh->SetCanEverAffectNavigation(false);
 
-	static ConstructorHelpers::FObjectFinder<USoundBase> CreakAsset(TEXT("/Game/Facility/Audio/S_DoorCreak.S_DoorCreak"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> CreakAsset(TEXT("/Game/Facility/Audio/S_DoorOpen.S_DoorOpen"));
 	static ConstructorHelpers::FObjectFinder<USoundBase> SlamAsset(TEXT("/Game/Facility/Audio/S_DoorSlam.S_DoorSlam"));
 	CreakSound = CreakAsset.Object;
+	static ConstructorHelpers::FObjectFinder<USoundBase> CloseAsset(TEXT("/Game/Facility/Audio/S_DoorClose.S_DoorClose"));
+	CloseSound = CloseAsset.Object;
 	SlamSound = SlamAsset.Object;
 
 	// placeholder slab, 100cm wide and 210cm tall, swinging from its left edge
@@ -122,6 +124,10 @@ void AFacilityDoor::Tick(float DeltaSeconds)
 
 	if (bArrived)
 	{
+		if (!bOpen)
+		{
+			FacilityAudio::PlayAt(this, CloseSound, GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), 1500.0f, 0.6f, FMath::FRandRange(0.94f, 1.06f));
+		}
 		SetActorTickEnabled(false);
 		UpdateNavigationBlocking();
 	}
@@ -161,7 +167,11 @@ void AFacilityDoor::PlaySlam()
 void AFacilityDoor::StartSwing()
 {
 	// each machine animates and hears its own swing
-	FacilityAudio::PlayAt(this, CreakSound, GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), 1500.0f, 0.8f, FMath::FRandRange(0.9f, 1.1f));
+	// opening: the latch and the groan now; closing: the latch catches when it gets there
+	if (bOpen)
+	{
+		FacilityAudio::PlayAt(this, CreakSound, GetActorLocation() + FVector(0.0f, 0.0f, 100.0f), 1500.0f, 0.6f, FMath::FRandRange(0.94f, 1.06f));
+	}
 	SetActorTickEnabled(true);
 	// closing: the slab stops blocking at once
 	UpdateNavigationBlocking();

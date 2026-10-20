@@ -11,6 +11,8 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
+#include "Facility/FacilityClue.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Net/UnrealNetwork.h"
 #include "Sound/SoundBase.h"
@@ -32,8 +34,11 @@ AFacilityContainer::AFacilityContainer()
 
 	Drawer = FacilityLook::AddPiece(this, TEXT("Drawer"), RootComponent, NAME_None, TEXT("Cube"), nullptr, FVector::ZeroVector, FRotator::ZeroRotator, FVector::OneVector);
 	Handle = FacilityLook::AddPiece(this, TEXT("Handle"), RootComponent, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Brass"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.02f, 0.12f, 0.025f));
+	Trim = FacilityLook::AddPiece(this, TEXT("Trim"), RootComponent, NAME_None, TEXT("Cube"), TEXT("MI_Retro_Paper"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.01f));
+	Clue = CreateDefaultSubobject<UFacilityClueComponent>(TEXT("Clue"));
+	Clue->SetupAttachment(RootComponent);
 
-	for (const TCHAR* MaterialName : { TEXT("MI_Retro_WoodDark"), TEXT("MI_Motel_Wood"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Rust"), TEXT("MI_Retro_Curtain"), TEXT("MI_Motel_Bed") })
+	for (const TCHAR* MaterialName : { TEXT("MI_Retro_WoodDark"), TEXT("MI_Motel_Wood"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Rust"), TEXT("MI_Retro_Curtain"), TEXT("MI_Motel_Bed"), TEXT("MI_Retro_Paint"), TEXT("MI_Retro_Paper") })
 	{
 		LookAssets.Add(MaterialName, FacilityLook::Material(MaterialName));
 	}
@@ -48,6 +53,7 @@ void AFacilityContainer::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(AFacilityContainer, bSearched);
 	DOREPLIFETIME(AFacilityContainer, Searcher);
 	DOREPLIFETIME(AFacilityContainer, SearchStartTime);
+	DOREPLIFETIME(AFacilityContainer, ClueItem);
 }
 
 void AFacilityContainer::OnConstruction(const FTransform& Transform)
@@ -60,44 +66,111 @@ void AFacilityContainer::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyLook();
+	OnRep_ClueItem();
 }
 
 void AFacilityContainer::ApplyLook()
 {
 	const auto Material = [this](const TCHAR* Name) { return Cast<UMaterialInterface>(LookAssets.FindRef(Name)); };
 	const FVector S = Size;
+	const bool bCart = Kind == EFacilityContainerKind::Cart;
+	const bool bMetal = Kind == EFacilityContainerKind::Cabinet;
 
 	// the body stands on the floor; X is its front
 	Body->SetRelativeLocation(FVector(0.0f, 0.0f, S.Z * 0.5f));
 	Body->SetRelativeScale3D(S / 100.0f);
 
-	if (Kind == EFacilityContainerKind::Cart)
+	// searchable furniture reads apart from the rest: a painted front with a brass handle and a pale trim that glows a
+	// little until it is searched (decor furniture is plain dark wood with no handle). In game each gets its own copies
+	// of the front and trim materials, so the one aimed at can light up
+	UMaterialInterface* FrontBase = Material(bCart ? TEXT("MI_Motel_Bed") : bMetal ? TEXT("MI_Retro_Rust") : TEXT("MI_Retro_Paint"));
+	UMaterialInterface* TrimBase = Material(TEXT("MI_Retro_Paper"));
+	const UWorld* World = GetWorld();
+	if (World && World->IsGameWorld())
 	{
-		// a metal frame with a heap of laundry on top; searching tips the heap aside
-		Body->SetMaterial(0, Material(TEXT("MI_Retro_Rust")));
-		Drawer->SetMaterial(0, Material(TEXT("MI_Motel_Bed")));
+		if (!DrawerMaterial && FrontBase)
+		{
+			DrawerMaterial = UMaterialInstanceDynamic::Create(FrontBase, this);
+			FrontBase->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Tint")), FrontTint);
+		}
+		if (!TrimMaterial && TrimBase)
+		{
+			TrimMaterial = UMaterialInstanceDynamic::Create(TrimBase, this);
+		}
+	}
+	Body->SetMaterial(0, Material(bCart ? TEXT("MI_Retro_Rust") : bMetal ? TEXT("MI_Retro_Metal") : TEXT("MI_Retro_WoodDark")));
+	Drawer->SetMaterial(0, DrawerMaterial ? static_cast<UMaterialInterface*>(DrawerMaterial) : FrontBase);
+	Trim->SetMaterial(0, TrimMaterial ? static_cast<UMaterialInterface*>(TrimMaterial) : TrimBase);
+
+	if (bCart)
+	{
+		// a metal frame with a heap of laundry on top; searching tips the heap aside. The trim runs round the rim
 		const FVector Heap(S.X * 0.85f, S.Y * 0.85f, 18.0f);
 		Drawer->SetRelativeScale3D(Heap / 100.0f);
 		Drawer->SetRelativeLocationAndRotation(
 			FVector(0.0f, OpenAlpha * S.Y * 0.35f, S.Z + 9.0f - OpenAlpha * 4.0f),
 			FRotator(0.0f, 0.0f, OpenAlpha * 18.0f));
 		Handle->SetVisibility(false);
+		Trim->SetRelativeScale3D(FVector(S.X + 2.0f, S.Y + 2.0f, 3.0f) / 100.0f);
+		Trim->SetRelativeLocation(FVector(0.0f, 0.0f, S.Z - 1.0f));
+		Clue->SetRelativeLocation(FVector(0.0f, 0.0f, S.Z + 10.0f));
+		UpdateGlow();
 		return;
 	}
-
-	const bool bMetal = Kind == EFacilityContainerKind::Cabinet;
-	Body->SetMaterial(0, Material(bMetal ? TEXT("MI_Retro_Metal") : TEXT("MI_Retro_WoodDark")));
-	Drawer->SetMaterial(0, Material(bMetal ? TEXT("MI_Retro_Rust") : TEXT("MI_Motel_Wood")));
 
 	// the top drawer: its front sits proud of the body, and it slides out half its depth when searched
 	const float DrawerHeight = FMath::Min(S.Z * 0.3f, 26.0f);
 	const FVector DrawerSize(S.X * 0.92f, S.Y * 0.84f, DrawerHeight);
 	const float DrawerZ = S.Z - DrawerHeight * 0.5f - 6.0f;
-	const float Out = 1.5f + OpenAlpha * S.X * 0.5f;
+	// closed, its front stands 1.5 cm proud of the body's front (it used to sit just inside it, out of sight)
+	const float DrawerX = S.X * 0.5f - DrawerSize.X * 0.5f + 1.5f + OpenAlpha * S.X * 0.5f;
 	Drawer->SetRelativeScale3D(DrawerSize / 100.0f);
-	Drawer->SetRelativeLocationAndRotation(FVector(Out - S.X * 0.04f, 0.0f, DrawerZ), FRotator::ZeroRotator);
+	Drawer->SetRelativeLocationAndRotation(FVector(DrawerX, 0.0f, DrawerZ), FRotator::ZeroRotator);
 	Handle->SetVisibility(true);
-	Handle->SetRelativeLocation(FVector(Out - S.X * 0.04f + DrawerSize.X * 0.5f + 1.0f, 0.0f, DrawerZ));
+	Handle->SetRelativeLocation(FVector(DrawerX + DrawerSize.X * 0.5f + 1.0f, 0.0f, DrawerZ));
+	// the trim: a strip along the top edge of the body's front, just proud of it
+	Trim->SetRelativeScale3D(FVector(1.5f, S.Y * 0.96f, 2.5f) / 100.0f);
+	Trim->SetRelativeLocation(FVector(S.X * 0.5f + 0.8f, 0.0f, S.Z - 2.0f));
+	Clue->SetRelativeLocation(FVector(0.0f, 0.0f, S.Z - 10.0f));
+	UpdateGlow();
+}
+
+void AFacilityContainer::UpdateGlow()
+{
+	// unsearched: the trim glows faintly; aimed at: front and trim brighten; searched: dark, the front dimmed
+	if (TrimMaterial)
+	{
+		TrimMaterial->SetScalarParameterValue(TEXT("Emissive"), bSearched ? 0.0f : bHighlighted ? 1.4f : 0.35f);
+		// searched, the pale strip goes dark too, so even under a flashlight it reads as done
+		TrimMaterial->SetVectorParameterValue(TEXT("Tint"), bSearched ? FLinearColor(0.12f, 0.1f, 0.09f) : FLinearColor::White);
+	}
+	if (DrawerMaterial)
+	{
+		DrawerMaterial->SetScalarParameterValue(TEXT("Emissive"), bHighlighted && !bSearched ? 0.35f : 0.0f);
+		DrawerMaterial->SetVectorParameterValue(TEXT("Tint"), bSearched ? FrontTint * 0.3f : FrontTint);
+	}
+}
+
+void AFacilityContainer::SetLocalHighlight(bool bOn)
+{
+	if (bHighlighted != bOn)
+	{
+		bHighlighted = bOn;
+		UpdateGlow();
+	}
+}
+
+bool AFacilityContainer::IsGivingClue() const
+{
+	return Clue && Clue->IsActive();
+}
+
+void AFacilityContainer::OnRep_ClueItem()
+{
+	if (Clue)
+	{
+		Clue->SetItem(bSearched ? NAME_None : ClueItem);
+	}
 }
 
 double AFacilityContainer::GetServerTime() const
@@ -130,6 +203,10 @@ void AFacilityContainer::SetContent(FName KeyId, const FText& Name, FName Signat
 	ContentName = Name;
 	ContentSignatureId = SignatureId;
 	ContentZoneId = ZoneId;
+
+	// a fuse or the gate key gives itself away to someone close; everything else is silent
+	ClueItem = (KeyId == FName(TEXT("Fuse")) || KeyId == AFacilityCharacter::GateKeyId) ? KeyId : NAME_None;
+	OnRep_ClueItem();
 }
 
 bool AFacilityContainer::CanInteract_Implementation(APawn* InstigatorPawn) const
@@ -253,6 +330,8 @@ void AFacilityContainer::FinishSearch(APawn* Pawn)
 	}
 	UE_LOG(LogTheFacility, Log, TEXT("%s searched %s: found %s"), *GetNameSafe(Pawn), *GetName(), *ContentKeyId.ToString());
 	ContentKeyId = NAME_None;
+	ClueItem = NAME_None;
+	OnRep_ClueItem();
 }
 
 void AFacilityContainer::OnRep_Searcher()
@@ -266,6 +345,8 @@ void AFacilityContainer::OnRep_Searcher()
 void AFacilityContainer::OnRep_Searched()
 {
 	SetActorTickEnabled(true);
+	UpdateGlow();
+	OnRep_ClueItem();
 	if (GetNetMode() != NM_DedicatedServer && bSearched)
 	{
 		FacilityAudio::PlayAt(this, Cast<USoundBase>(LookAssets.FindRef(TEXT("Rummage"))), GetActorLocation() + FVector(0.0f, 0.0f, Size.Z), 900.0f, 0.5f, 1.6f);

@@ -80,16 +80,25 @@ public:
 	float GetLookSensitivity() const { return LookSensitivity; }
 	float GetMasterVolume() const { return MasterVolume; }
 	float GetVoiceVolume() const { return VoiceVolume; }
+	/** Footsteps, doors, creatures, everything that isn't a voice */
+	float GetEffectsVolume() const { return EffectsVolume; }
+	/** The retro picture: 0 off, 1 low (fine dither), 2 full (coarse, the PS1 look) */
+	int32 GetRetroLevel() const { return RetroLevel; }
 	/** Exposure offset in stops, added to whatever the level sets */
 	float GetBrightness() const { return Brightness; }
 
 	void SetLookSensitivity(float Multiplier);
 	void SetMasterVolume(float Volume);
 	void SetVoiceVolume(float Volume);
+	void SetEffectsVolume(float Volume);
+	void SetRetroLevel(int32 Level);
 	void SetBrightness(float Stops);
 
-	/** Master volume on the audio device, and voice volume on the voice sound class */
+	/** Master volume on the audio device, voice volume on the voice sound class, effects on SC_SFX */
 	void ApplySoundSettings();
+
+	/** The retro pass on this world's post-process volumes, at the chosen level */
+	void ApplyRetro(UWorld* World);
 
 	/** Brightness on a character's camera, the view this machine sees through when it looks from that character */
 	void ApplyBrightness(class AFacilityCharacter* Character) const;
@@ -164,6 +173,18 @@ protected:
 	/** Exposure offset in stops */
 	UPROPERTY(config)
 	float Brightness = 0.0f;
+
+	/** Everything but voices. Below full by default: the night is meant to be heard, not to be loud */
+	UPROPERTY(config)
+	float EffectsVolume = 0.6f;
+
+	/** 0 off, 1 low, 2 full. Low by default */
+	UPROPERTY(config)
+	int32 RetroLevel = 1;
+
+	FDelegateHandle PostLoadMapHandle;
+
+	void HandlePostLoadMap(UWorld* World) { ApplyRetro(World); }
 
 	/** Bit per first-night hint already shown on this machine */
 	UPROPERTY(config)

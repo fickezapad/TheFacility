@@ -12,6 +12,10 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityThrown.h"
+#include "Facility/FacilityAudio.h"
+#include "Sound/SoundBase.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Facility/FacilityVoiceComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -37,6 +41,8 @@
 
 const FName AFacilityCharacter::FlashCameraId(TEXT("FlashCamera"));
 const FName AFacilityCharacter::GateKeyId(TEXT("GateKey"));
+const FName AFacilityCharacter::BottleId(TEXT("Bottle"));
+const FName AFacilityCharacter::CanId(TEXT("Can"));
 
 #if !UE_BUILD_SHIPPING
 /** QA: BugItGo needs cheats, which clients don't have. This moves the local player's own character on any machine */
@@ -81,6 +87,13 @@ AFacilityCharacter::AFacilityCharacter(const FObjectInitializer& ObjectInitializ
 	Flashlight->AttenuationRadius = 1600.0f;
 	Flashlight->InnerConeAngle = 12.0f;
 	Flashlight->OuterConeAngle = 28.0f;
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> StepSneakAsset(TEXT("/Game/Facility/Audio/S_StepSneak.S_StepSneak"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> StepWalkAsset(TEXT("/Game/Facility/Audio/S_StepWalk.S_StepWalk"));
+	static ConstructorHelpers::FObjectFinder<USoundBase> StepSprintAsset(TEXT("/Game/Facility/Audio/S_StepSprint.S_StepSprint"));
+	StepSneakSound = StepSneakAsset.Object;
+	StepWalkSound = StepWalkAsset.Object;
+	StepSprintSound = StepSprintAsset.Object;
 
 	DarkAdaptLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("DarkAdaptLight"));
 	DarkAdaptLight->SetupAttachment(GetCapsuleComponent());
@@ -310,9 +323,11 @@ void AFacilityCharacter::Tick(float DeltaSeconds)
 	}
 	if (!bBrightnessApplied && GetNetMode() != NM_DedicatedServer)
 	{
-		if (const UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+		if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
 		{
 			GameInstance->ApplyBrightness(this);
+			// the map's retro pass at this machine's setting (again, in case the map came up before the settings did)
+			GameInstance->ApplyRetro(GetWorld());
 		}
 		bBrightnessApplied = true;
 	}
@@ -327,6 +342,10 @@ void AFacilityCharacter::Tick(float DeltaSeconds)
 	if (HasAuthority())
 	{
 		UpdateFootstepNoise(DeltaSeconds);
+	}
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		UpdateFootstepSound(DeltaSeconds);
 	}
 
 	if (GetNetMode() == NM_DedicatedServer || !Flashlight->IsVisible())
@@ -359,6 +378,44 @@ void AFacilityCharacter::UpdateFootstepNoise(float DeltaSeconds)
 		AFacilityTenant::ReportNoise(GetWorld(), GetActorLocation(), WalkNoiseRadius, this);
 		FootstepNoiseCooldown = 0.5f;
 	}
+}
+
+bool AFacilityCharacter::IsSneakingNow() const
+{
+	const UFacilityMovementComponent* Movement = GetFacilityMovement();
+	return Movement && Movement->IsSneaking();
+}
+
+void AFacilityCharacter::UpdateFootstepSound(float DeltaSeconds)
+{
+	const UFacilityMovementComponent* Movement = GetFacilityMovement();
+	const float Speed = GetVelocity().Size2D();
+	if (!Movement || !Movement->IsMovingOnGround() || IsHiding() || IsDowned() || IsRetained() || Speed < 60.0f)
+	{
+		StepTimer = 0.0f;
+		return;
+	}
+
+	// the gait from how fast it goes, which every machine sees the same; the flags only exist where it is simulated.
+	// Sneak 150 cm/s, walk 320, sprint 540 (220 when out of breath counts as a walk)
+	const bool bOwnFlags = IsLocallyControlled() || HasAuthority();
+	const bool bSneak = bOwnFlags ? Movement->IsSneaking() : Speed < 200.0f;
+	const bool bSprint = bOwnFlags ? Movement->IsSprinting() : Speed > 430.0f;
+	const float Interval = bSprint ? 0.31f : bSneak ? 0.68f : 0.48f;
+	StepTimer -= DeltaSeconds;
+	if (StepTimer > 0.0f)
+	{
+		return;
+	}
+	StepTimer = Interval;
+
+	USoundBase* Sound = bSprint ? StepSprintSound : bSneak ? StepSneakSound : StepWalkSound;
+	LastFootstep = bSprint ? FName(TEXT("Sprint")) : bSneak ? FName(TEXT("Sneak")) : FName(TEXT("Walk"));
+	// your own feet are quieter in your ears than someone else's; others carry as far as the Tenant hears them
+	const float Falloff = bSprint ? 2200.0f : bSneak ? 450.0f : 1100.0f;
+	const float Volume = (IsLocallyControlled() ? 0.3f : 0.75f) * (bSprint ? 1.0f : bSneak ? 0.45f : 0.7f);
+	const FVector Feet = GetActorLocation() - FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - 5.0f);
+	FacilityAudio::PlayAt(this, Sound, Feet, Falloff, Volume, FMath::FRandRange(0.9f, 1.1f));
 }
 
 FText AFacilityCharacter::GetInteractKeyText() const
@@ -500,10 +557,49 @@ void AFacilityCharacter::DoUseItem()
 		return;
 	}
 
+	// something to throw goes first; with nothing in hand, the flash
+	if (GetHeldThrowable() != NAME_None)
+	{
+		Server_Throw(GetBaseAimRotation().Vector());
+		return;
+	}
+
 	if (HasKey(FlashCameraId))
 	{
 		Server_UseFlash();
 	}
+}
+
+void AFacilityCharacter::ThrowToward(const FVector& Target)
+{
+	const FVector Direction = (Target - GetPawnViewLocation()).GetSafeNormal();
+	if (AController* PC = GetController())
+	{
+		PC->SetControlRotation(Direction.Rotation());
+	}
+	Server_Throw(Direction);
+}
+
+void AFacilityCharacter::Server_Throw_Implementation(FVector_NetQuantizeNormal Direction)
+{
+	const FName Item = GetHeldThrowable();
+	if (!IsStanding() || IsHiding() || Item.IsNone() || Direction.IsNearlyZero())
+	{
+		return;
+	}
+	RemoveKey(Item);
+
+	// from just in front of the eyes, a little upward, so a throw at the floor ahead still arcs
+	const FVector Eye = GetPawnViewLocation();
+	const FVector Aim = (FVector(Direction).GetSafeNormal() + FVector(0.0f, 0.0f, 0.12f)).GetSafeNormal();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (AFacilityThrown* Thrown = GetWorld()->SpawnActor<AFacilityThrown>(AFacilityThrown::StaticClass(), Eye + Aim * 35.0f, Aim.Rotation(), SpawnParams))
+	{
+		Thrown->Launch(Item, this, Aim);
+	}
+	UE_LOG(LogTheFacility, Log, TEXT("%s throws the %s"), GetPlayerState() ? *GetPlayerState()->GetPlayerName() : *GetName(), *Item.ToString());
 }
 
 AFacilityDoor* AFacilityCharacter::GetFocusedLockableDoor() const
@@ -720,6 +816,14 @@ FText AFacilityCharacter::GetItemName(FName KeyId)
 	if (KeyId == AFacilityDoor::MasterKeyId)
 	{
 		return NSLOCTEXT("Facility", "ItemMasterKey", "Master key");
+	}
+	if (KeyId == BottleId)
+	{
+		return NSLOCTEXT("Facility", "ItemBottle", "Empty bottle");
+	}
+	if (KeyId == CanId)
+	{
+		return NSLOCTEXT("Facility", "ItemCan", "Soda can");
 	}
 	if (KeyId == GateKeyId)
 	{
