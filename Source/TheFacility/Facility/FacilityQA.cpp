@@ -21,6 +21,11 @@
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
 #include "Facility/FacilityThrown.h"
+#include "Facility/FacilityClerk.h"
+#include "Facility/FacilityGuest.h"
+#include "Facility/FacilityResident.h"
+#include "Facility/FacilityNight.h"
+#include "Facility/FacilityShift.h"
 #include "Facility/FacilityMarkedAIController.h"
 #include "Facility/FacilityVoiceComponent.h"
 #include "Camera/CameraActor.h"
@@ -102,7 +107,10 @@ namespace FacilityQA
 
 	static void Check(const FString& What, const FString& Expected, const FString& Got)
 	{
-		const bool bPass = Expected.Equals(Got, ESearchCase::IgnoreCase);
+		// "2|3" accepts either
+		TArray<FString> Accepted;
+		Expected.ParseIntoArray(Accepted, TEXT("|"));
+		const bool bPass = Expected.Equals(Got, ESearchCase::IgnoreCase) || Accepted.ContainsByPredicate([&Got](const FString& One) { return One.Equals(Got, ESearchCase::IgnoreCase); });
 		// through the variable, not a C++ ref: a ref-backed console variable reads a cached copy
 		CVarLastResult->Set(bPass ? 1 : 0, ECVF_SetByCode);
 		if (bQuiet)
@@ -344,6 +352,16 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAPlaceCreature(
 		if (Args[0] == TEXT("Marked"))
 		{
 			TActorIterator<AFacilityMarked> It(World);
+			Creature = It ? *It : nullptr;
+		}
+		else if (Args[0] == TEXT("Clerk"))
+		{
+			TActorIterator<AFacilityClerk> It(World);
+			Creature = It ? *It : nullptr;
+		}
+		else if (Args[0] == TEXT("Guest"))
+		{
+			TActorIterator<AFacilityGuest> It(World);
 			Creature = It ? *It : nullptr;
 		}
 		else
@@ -618,6 +636,105 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAExpect(
 			TArray<FString> Accepted;
 			Args[2].ParseIntoArray(Accepted, TEXT("|"));
 			Check(Line, Accepted.Contains(State) ? State : Args[2], State);
+		}
+		else if (What == TEXT("PlayerCount"))
+		{
+			int32 Count = 0;
+			for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+			{
+				Count += It->Get() && Cast<AFacilityCharacter>(It->Get()->GetPawn()) ? 1 : 0;
+			}
+			Check(Line, Args[1], FString::FromInt(Count));
+		}
+		else if (What == TEXT("Night"))
+		{
+			Check(Line, Args[1], GameState ? FString::FromInt(GameState->GetNight()) : TEXT("Missing"));
+		}
+		else if (What == TEXT("Clerk") || What == TEXT("Guest"))
+		{
+			FString Got = TEXT("Missing");
+			if (What == TEXT("Clerk"))
+			{
+				TActorIterator<AFacilityClerk> It(World);
+				Got = It ? StaticEnum<EClerkState>()->GetNameStringByValue((int64)It->GetClerkState()) : Got;
+			}
+			else
+			{
+				TActorIterator<AFacilityGuest> It(World);
+				Got = It ? StaticEnum<EGuestState>()->GetNameStringByValue((int64)It->GetGuestState()) : Got;
+			}
+			Check(Line, Args[1], Got);
+		}
+		else if (What == TEXT("CreatureNear") && Args.Num() >= 5)
+		{
+			const AActor* Creature = nullptr;
+			if (Args[1] == TEXT("Clerk")) { TActorIterator<AFacilityClerk> It(World); Creature = It ? *It : nullptr; }
+			else if (Args[1] == TEXT("Guest")) { TActorIterator<AFacilityGuest> It(World); Creature = It ? *It : nullptr; }
+			else if (Args[1] == TEXT("Marked")) { TActorIterator<AFacilityMarked> It(World); Creature = It ? *It : nullptr; }
+			else { TActorIterator<AFacilityTenant> It(World); Creature = It ? *It : nullptr; }
+			const float Distance = Creature ? FVector::Dist2D(Creature->GetActorLocation(), FVector(ArgFloat(Args, 2, 0.0f), ArgFloat(Args, 3, 0.0f), 0.0f)) : -1.0f;
+			Check(Line, TEXT("1"), Creature && Distance <= ArgFloat(Args, 4, 0.0f) ? TEXT("1") : FString::Printf(TEXT("0 (%.0f cm)"), Distance));
+		}
+		else if (What == TEXT("GuestFrozen"))
+		{
+			TActorIterator<AFacilityGuest> It(World);
+			Check(Line, Args[1], It ? (It->IsFrozen() ? TEXT("1") : TEXT("0")) : TEXT("Missing"));
+		}
+		else if (What == TEXT("Awake") || What == TEXT("Offerings") || What == TEXT("Bound"))
+		{
+			// tonight's plan, worked out from the seed the way every machine does
+			const FacilityNight::FSite Site = FacilityNight::GatherSite(World);
+			const FacilityNight::FPlan Plan = FacilityNight::Plan(GameState ? GameState->GetRunSeed() : 0, Site, GameState ? GameState->GetNight() : 1);
+			// "2|3" accepts either
+			const auto CheckAny = [&Line](const FString& Expected, const FString& Got)
+			{
+				TArray<FString> Accepted;
+				Expected.ParseIntoArray(Accepted, TEXT("|"));
+				Check(Line, Accepted.Contains(Got) ? Got : Expected, Got);
+			};
+			if (What == TEXT("Awake"))
+			{
+				CheckAny(Args[1], FString::FromInt(Plan.Creatures.Num()));
+			}
+			else if (What == TEXT("Offerings"))
+			{
+				CheckAny(Args[1], FString::FromInt(Plan.GetOfferings().Num()));
+			}
+			else if (Args.Num() >= 3)
+			{
+				Check(Line, Args[2], FacilityShift::CreatureName(Plan.BoundTo(FName(*Args[1]))).Replace(TEXT(" "), TEXT("")));
+			}
+		}
+		else if (What == TEXT("Residents") || What == TEXT("ResidentsReacted"))
+		{
+			int32 Count = 0;
+			for (TActorIterator<AFacilityResident> It(World); It; ++It)
+			{
+				Count += What == TEXT("Residents") ? (It->IsShown() ? 1 : 0) : (It->HasReacted() ? 1 : 0);
+			}
+			Check(Line, Args[1], FString::FromInt(Count));
+		}
+		else if (What == TEXT("Treasures"))
+		{
+			int32 Count = 0;
+			for (TActorIterator<AFacilityPickup> It(World); It; ++It)
+			{
+				Count += FacilityShift::IsTreasure(It->GetGrantedKeyId()) ? 1 : 0;
+			}
+			Check(Line, Args[1], FString::FromInt(Count));
+		}
+		else if (What == TEXT("Score") || What == TEXT("Records") || What == TEXT("ShiftOver") || What == TEXT("NextNight"))
+		{
+			FString Got = TEXT("Missing");
+			if (GameState)
+			{
+				const TArray<FFacilityNightRecord>& Records = GameState->GetShiftRecords();
+				Got = What == TEXT("Records") ? FString::FromInt(Records.Num())
+					: What == TEXT("ShiftOver") ? FString(GameState->IsShiftOver() ? TEXT("1") : TEXT("0"))
+					: What == TEXT("NextNight") ? FString(GameState->GetNextNightTime() > 0.0 ? TEXT("1") : TEXT("0"))
+					: Records.IsEmpty() ? TEXT("none") : FString::FromInt(Records.Last().Score);
+			}
+			Check(Line, Args[1], Got);
 		}
 		else if (What == TEXT("MarkedSees") && Args.Num() >= 3)
 		{

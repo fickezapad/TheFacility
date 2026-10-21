@@ -112,6 +112,8 @@ protected:
 
 	bool bShutDown = false;
 
+	float Harshness = 1.0f;
+
 	FTimerHandle ThinkTimer;
 
 	static constexpr float ThinkInterval = 0.5f;
@@ -146,6 +148,11 @@ public:
 
 	/** Server only. The run is over: no more answers, and darkened lights come back */
 	void ShutDown();
+
+	/** Server: how much faster than usual its attention grows and its answers recur. Later nights of a shift are harsher */
+	void SetHarshness(float Multiplier);
+
+	float GetHarshness() const { return Harshness; }
 
 	int32 GetTier() const { return Tier; }
 

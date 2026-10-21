@@ -43,7 +43,7 @@ AFacilityPickup::AFacilityPickup()
 	{
 		LookAssets.Add(ShapeName, FacilityLook::Shape(ShapeName));
 	}
-	for (const TCHAR* MaterialName : { TEXT("MI_Char_Item"), TEXT("MI_Char_ItemBrass"), TEXT("MI_Motel_Ledger"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Glass"), TEXT("MI_Retro_BottleGlass"), TEXT("MI_Retro_CanPaint") })
+	for (const TCHAR* MaterialName : { TEXT("MI_Char_Item"), TEXT("MI_Char_ItemBrass"), TEXT("MI_Motel_Ledger"), TEXT("MI_Retro_Metal"), TEXT("MI_Retro_Glass"), TEXT("MI_Retro_BottleGlass"), TEXT("MI_Retro_CanPaint"), TEXT("MI_Retro_WoodDark"), TEXT("MI_Retro_Paper") })
 	{
 		LookAssets.Add(MaterialName, FacilityLook::Material(MaterialName));
 	}
@@ -98,6 +98,30 @@ void AFacilityPickup::ApplyLook()
 		// a boxy instant camera, lens forward
 		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.12f, 0.2f, 0.12f));
 		Dress(LookDetail, TEXT("Cylinder"), TEXT("MI_Retro_Glass"), FVector(22.0f, 0.0f, 0.0f), FRotator(90.0f, 0.0f, 0.0f), FVector(0.07f, 0.07f, 0.05f));
+	}
+	else if (GrantedKeyId == TEXT("MusicBox"))
+	{
+		// a little lacquered box with a brass lid, left ajar
+		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_WoodDark"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.16f, 0.11f, 0.08f));
+		Dress(LookDetail, TEXT("Cube"), TEXT("MI_Char_ItemBrass"), FVector(-8.0f, 0.0f, 22.0f), FRotator(0.0f, 0.0f, -25.0f), FVector(0.17f, 0.12f, 0.012f));
+	}
+	else if (GrantedKeyId == TEXT("Lighter"))
+	{
+		// a silver lighter, its lid flipped open
+		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.04f, 0.025f, 0.065f));
+		Dress(LookDetail, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector(0.0f, 7.0f, 18.0f), FRotator(0.0f, 0.0f, 35.0f), FVector(0.04f, 0.025f, 0.03f));
+	}
+	else if (GrantedKeyId == TEXT("Photo"))
+	{
+		// a framed wedding photo, standing on its little stand
+		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_WoodDark"), FVector(0.0f, 0.0f, 10.0f), FRotator(-12.0f, 0.0f, 0.0f), FVector(0.015f, 0.13f, 0.17f));
+		Dress(LookDetail, TEXT("Cube"), TEXT("MI_Retro_Paper"), FVector(3.0f, 0.0f, 10.0f), FRotator(-12.0f, 0.0f, 0.0f), FVector(0.004f, 0.1f, 0.13f));
+	}
+	else if (GrantedKeyId == TEXT("CashBox"))
+	{
+		// a dented grey cash box with a brass handle
+		Dress(Look, TEXT("Cube"), TEXT("MI_Retro_Metal"), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.26f, 0.18f, 0.1f));
+		Dress(LookDetail, TEXT("Cube"), TEXT("MI_Char_ItemBrass"), FVector(0.0f, 0.0f, 20.0f), FRotator::ZeroRotator, FVector(0.1f, 0.015f, 0.02f));
 	}
 	else if (GrantedKeyId == AFacilityCharacter::BottleId)
 	{

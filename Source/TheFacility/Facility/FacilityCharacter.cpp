@@ -13,6 +13,7 @@
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
 #include "Facility/FacilityThrown.h"
+#include "Facility/FacilityShift.h"
 #include "Facility/FacilityAudio.h"
 #include "Sound/SoundBase.h"
 #include "UObject/ConstructorHelpers.h"
@@ -816,6 +817,10 @@ FText AFacilityCharacter::GetItemName(FName KeyId)
 	if (KeyId == AFacilityDoor::MasterKeyId)
 	{
 		return NSLOCTEXT("Facility", "ItemMasterKey", "Master key");
+	}
+	if (FacilityShift::IsTreasure(KeyId))
+	{
+		return FacilityShift::NameOf(KeyId);
 	}
 	if (KeyId == BottleId)
 	{

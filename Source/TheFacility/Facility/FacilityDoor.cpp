@@ -95,6 +95,29 @@ void AFacilityDoor::LockForNight()
 	bHeldShut = false;
 }
 
+bool AFacilityDoor::ClerkLock()
+{
+	if (!HasAuthority() || bOpen || bLocked || bBroken || bHeldShut)
+	{
+		return false;
+	}
+	bLocked = true;
+	bClerkLocked = true;
+	return true;
+}
+
+void AFacilityDoor::ClerkUnlock()
+{
+	if (HasAuthority() && bClerkLocked)
+	{
+		bClerkLocked = false;
+		if (!bBroken)
+		{
+			bLocked = false;
+		}
+	}
+}
+
 void AFacilityDoor::BeginPlay()
 {
 	Super::BeginPlay();

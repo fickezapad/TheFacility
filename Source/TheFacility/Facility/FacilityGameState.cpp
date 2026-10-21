@@ -22,6 +22,11 @@ void AFacilityGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(AFacilityGameState, RunEndTime);
 	DOREPLIFETIME(AFacilityGameState, EscapedNames);
 	DOREPLIFETIME(AFacilityGameState, LeftBehindNames);
+	DOREPLIFETIME(AFacilityGameState, Night);
+	DOREPLIFETIME(AFacilityGameState, ShiftSeed);
+	DOREPLIFETIME(AFacilityGameState, ShiftRecords);
+	DOREPLIFETIME(AFacilityGameState, NextNightTime);
+	DOREPLIFETIME(AFacilityGameState, bShiftOver);
 }
 
 void AFacilityGameState::StartRun(int32 Seed)

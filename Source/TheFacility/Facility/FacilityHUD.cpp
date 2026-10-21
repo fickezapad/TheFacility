@@ -15,6 +15,9 @@
 #include "Facility/FacilityMovementComponent.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityNight.h"
+#include "Facility/FacilityRegister.h"
+#include "Facility/FacilityShift.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -102,6 +105,7 @@ void AFacilityHUD::DrawObjective(const AFacilityGameState* GameState, const AFac
 		Objective = bChained ? Fuses + TEXT(" The gate is chained, too.") : Fuses;
 	}
 
+	Objective = FString::Printf(TEXT("Night %d of %d.  "), GameState->GetNight(), FacilityShift::NightsPerShift) + Objective;
 	DrawCentered(Objective, Canvas->ClipX * 0.5f, 18.0f, FLinearColor(0.75f, 0.75f, 0.7f, 0.8f), GEngine->GetSmallFont());
 }
 
@@ -184,9 +188,112 @@ void AFacilityHUD::DrawRunOver(const AFacilityGameState* GameState)
 		Y += 18.0f;
 	}
 
-	DrawCentered(GetNetMode() == NM_Client ? TEXT("Waiting for the host to start another night")
-		: FString::Printf(TEXT("R   a new night          T   night %d again"), GameState->GetRunSeed()),
-		CenterX, Canvas->ClipY * 0.85f, FLinearColor(0.6f, 0.6f, 0.6f), GEngine->GetMediumFont());
+	// the night's score and what was taken, then the shift so far (or, once it is over, the whole shift)
+	const TArray<FFacilityNightRecord>& Records = GameState->GetShiftRecords();
+	if (!Records.IsEmpty())
+	{
+		const FFacilityNightRecord& Last = Records.Last();
+		Y += 10.0f;
+		DrawCentered(FString::Printf(TEXT("NIGHT %d OF %d:  %d POINTS"), Last.Night, FacilityShift::NightsPerShift, Last.Score), CenterX, Y, FLinearColor(0.95f, 0.85f, 0.55f), GEngine->GetMediumFont());
+		Y += 24.0f;
+		for (const FString& Offering : Last.Offerings)
+		{
+			DrawCentered(Offering, CenterX, Y, FLinearColor(0.8f, 0.75f, 0.62f), GEngine->GetSmallFont());
+			Y += 16.0f;
+		}
+		if (Last.Offerings.IsEmpty())
+		{
+			DrawCentered(TEXT("Nothing taken from the motel tonight"), CenterX, Y, FLinearColor(0.6f, 0.6f, 0.6f), GEngine->GetSmallFont());
+			Y += 16.0f;
+		}
+		if (!Last.Creatures.IsEmpty())
+		{
+			DrawCentered(TEXT("Awake tonight: ") + FString::Join(Last.Creatures, TEXT(", ")), CenterX, Y, FLinearColor(0.7f, 0.5f, 0.5f), GEngine->GetSmallFont());
+			Y += 16.0f;
+		}
+		if (GameState->IsShiftOver())
+		{
+			Y += 10.0f;
+			int32 Total = 0;
+			for (const FFacilityNightRecord& Record : Records)
+			{
+				Total += Record.Score;
+				DrawCentered(FString::Printf(TEXT("Night %d   %s   %d:%02d   %d"), Record.Night, Record.bEscaped ? TEXT("got out") : TEXT("all taken"),
+					FMath::FloorToInt(Record.Seconds / 60.0f), FMath::FloorToInt(Record.Seconds) % 60, Record.Score), CenterX, Y, FLinearColor(0.75f, 0.75f, 0.72f), GEngine->GetSmallFont());
+				Y += 16.0f;
+			}
+			DrawCentered(FString::Printf(TEXT("THE SHIFT:  %d POINTS"), Total), CenterX, Y + 6.0f, FLinearColor(0.95f, 0.85f, 0.55f), GEngine->GetMediumFont());
+		}
+	}
+
+	FString Footer;
+	if (GameState->GetNextNightTime() > 0.0)
+	{
+		const int32 Left = FMath::Max(0, FMath::CeilToInt(GameState->GetNextNightTime() - GameState->GetServerWorldTimeSeconds()));
+		Footer = FString::Printf(TEXT("Night %d begins in %d"), GameState->GetNight() + 1, Left);
+		if (GetNetMode() != NM_Client)
+		{
+			Footer += TEXT("          R   a new shift          T   this shift again");
+		}
+	}
+	else
+	{
+		Footer = GetNetMode() == NM_Client ? TEXT("The shift is over. Waiting for the host")
+			: FString::Printf(TEXT("R   a new shift          T   shift %d again"), GameState->GetShiftSeed());
+	}
+	DrawCentered(Footer, CenterX, Canvas->ClipY * 0.9f, FLinearColor(0.6f, 0.6f, 0.6f), GEngine->GetMediumFont());
+}
+
+void AFacilityHUD::ShowLine(const FString& Text, float Seconds)
+{
+	ShownLines.Add({ Text, static_cast<float>(GetWorld()->GetRealTimeSeconds() + Seconds) });
+}
+
+void AFacilityHUD::DrawLines()
+{
+	const float Now = GetWorld()->GetRealTimeSeconds();
+	ShownLines.RemoveAll([Now](const FShownLine& Line) { return Line.Until < Now; });
+	float Y = Canvas->ClipY * 0.74f;
+	for (const FShownLine& Line : ShownLines)
+	{
+		const float Alpha = FMath::Clamp(Line.Until - Now, 0.0f, 1.0f);
+		DrawCentered(TEXT("\"") + Line.Text + TEXT("\""), Canvas->ClipX * 0.5f, Y, FLinearColor(0.78f, 0.82f, 0.86f, Alpha), GEngine->GetMediumFont());
+		Y += 26.0f;
+	}
+}
+
+void AFacilityHUD::DrawRegister(const AFacilityGameState* GameState)
+{
+	// tonight's page, worked out here from the night's seed like the server did
+	const int32 Key = GameState->GetRunSeed() * 10 + GameState->GetNight();
+	if (Key != RegisterKey)
+	{
+		RegisterKey = Key;
+		RegisterPage.Reset();
+		const FacilityNight::FSite Site = FacilityNight::GatherSite(GetWorld());
+		const FacilityNight::FPlan Plan = FacilityNight::Plan(GameState->GetRunSeed(), Site, GameState->GetNight());
+		for (const FName Offering : Plan.GetOfferings())
+		{
+			const int32* Variant = Plan.HintVariant.Find(Offering);
+			RegisterPage.Add(FString::Printf(TEXT("%s, %d:  %s"), *FacilityShift::NameOf(Offering).ToString().ToUpper(), FacilityShift::ValueOf(Offering),
+				*FacilityShift::HintFor(Plan.BoundTo(Offering), Variant ? *Variant : 0)));
+		}
+	}
+
+	const float Width = FMath::Min(Canvas->ClipX - 80.0f, 760.0f);
+	const float X = (Canvas->ClipX - Width) * 0.5f;
+	float Y = Canvas->ClipY * 0.2f;
+	const float Height = 70.0f + RegisterPage.Num() * 24.0f;
+	DrawRect(FLinearColor(0.16f, 0.13f, 0.09f, 0.92f), X, Y, Width, Height);
+	DrawRect(FLinearColor(0.45f, 0.06f, 0.05f, 0.95f), X, Y, Width, 4.0f);
+	DrawCentered(FString::Printf(TEXT("THE REGISTER.  NIGHT %d"), GameState->GetNight()), Canvas->ClipX * 0.5f, Y + 12.0f, FLinearColor(0.92f, 0.86f, 0.7f), GEngine->GetMediumFont());
+	Y += 44.0f;
+	for (const FString& Line : RegisterPage)
+	{
+		DrawText(Line, FLinearColor(0.85f, 0.8f, 0.68f), X + 20.0f, Y, GEngine->GetSmallFont());
+		Y += 24.0f;
+	}
+	DrawCentered(TEXT("Taken, each pays the crew if its taker gets out. Each wakes something."), Canvas->ClipX * 0.5f, Y + 4.0f, FLinearColor(0.6f, 0.55f, 0.48f), GEngine->GetSmallFont());
 }
 
 void AFacilityHUD::DrawShadowed(const FString& Text, float X, float Y, const FLinearColor& Color, UFont* Font, float Scale)
@@ -518,6 +625,14 @@ void AFacilityHUD::DrawHUD()
 		DrawSearchProgress(Character);
 	}
 	DrawHint();
+	DrawLines();
+
+	// aiming at the register shows tonight's page
+	if (Character && Character->IsLocallyControlled() && RunGameState && Character->GetInteractionComponent()
+		&& Cast<AFacilityRegister>(Character->GetInteractionComponent()->GetFocusedActor()))
+	{
+		DrawRegister(RunGameState);
+	}
 
 	// the Facility's whisper: everyone sees it, it fades over a few seconds
 	if (const AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
@@ -560,6 +675,7 @@ void AFacilityHUD::DrawHUD()
 				: Key == AFacilityDoor::MasterKeyId ? TEXT("LMB on a closed door  lock / unlock")
 				: Key == AFacilityCharacter::GateKeyId ? TEXT("E on the chained gate")
 				: AFacilityCharacter::IsThrowable(Key) ? TEXT("LMB  throw: the crash draws it away")
+				: FacilityShift::IsTreasure(Key) ? TEXT("worth points if you get out with it")
 				: TEXT("");
 			DrawText(Name, FLinearColor(0.0f, 0.0f, 0.0f, 0.7f), 25.5f, ItemY + 1.5f, GEngine->GetSmallFont());
 			DrawText(Name, FLinearColor(0.88f, 0.84f, 0.72f, 0.9f), 24.0f, ItemY, GEngine->GetSmallFont());

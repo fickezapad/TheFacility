@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "TheFacilityGameMode.h"
 #include "Facility/FacilityGameState.h"
+#include "Facility/FacilityShift.h"
 #include "FacilityGameMode.generated.h"
 
 /**
@@ -24,8 +25,13 @@ public:
 
 	AFacilityGameMode();
 
-	/** Server: starts another night on the same map, for everyone. bSameNight replays this night's seed */
+	/** Server: starts a new shift on the same map, for everyone. bSameNight replays this shift's seed from its first night */
 	void RestartRun(bool bSameNight = false);
+
+	/** Server: on to the next night of the shift (after an escape), for everyone */
+	void AdvanceNight();
+
+	int32 GetNight() const { return Night; }
 
 protected:
 
@@ -33,8 +39,24 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Run", meta=(ClampMin=0, Units="s"))
 	float EscapeHoldTime = 1.5f;
 
-	/** Seed for this run: from the ?Seed= URL option, else facility.Seed, else random */
+	/** Seed for this night: the shift's night seed */
 	int32 RunSeed = 0;
+
+	/** The shift's seed (from "another night", the ?Seed= URL option, facility.Seed, or chance) and this night of it */
+	int32 ShiftSeed = 0;
+	int32 Night = 1;
+
+	/** Seconds between an escape and the next night of the shift */
+	UPROPERTY(EditAnywhere, Category="Run", meta=(ClampMin=1, Units="s"))
+	float NextNightDelay = 12.0f;
+
+	/** The creatures awake tonight, for the record */
+	TArray<EFacilityCreature> NightCreatures;
+
+	FTimerHandle NextNightTimer;
+
+	/** Points for the night: everyone who got out, plus every Offering whose (last) signer got out */
+	FFacilityNightRecord MakeRecord(EFacilityRunState Outcome, const TArray<FString>& Escaped) const;
 
 	float EscapeHeldFor = 0.0f;
 

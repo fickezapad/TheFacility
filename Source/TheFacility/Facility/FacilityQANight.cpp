@@ -18,6 +18,12 @@
 #include "Facility/FacilityNight.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityThrown.h"
+#include "Facility/FacilityClerk.h"
+#include "Facility/FacilityGuest.h"
+#include "Facility/FacilityResident.h"
+#include "Facility/FacilityGameMode.h"
+#include "Facility/FacilityShift.h"
+#include "Engine/TargetPoint.h"
 #include "GameFramework/PlayerStart.h"
 #include "NavigationPath.h"
 #include "NavigationSystem.h"
@@ -277,7 +283,7 @@ static FAutoConsoleCommandWithWorld CmdQANightPlan(
 			return;
 		}
 		const FacilityNight::FSite Site = FacilityNight::GatherSite(World);
-		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_NIGHT %s"), *FacilityNight::Plan(GameState->GetRunSeed(), Site).Describe(Site));
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_NIGHT %s"), *FacilityNight::Plan(GameState->GetRunSeed(), Site, GameState->GetNight()).Describe(Site));
 	}));
 
 static FAutoConsoleCommandWithWorldAndArgs CmdQAValidateNights(
@@ -351,6 +357,33 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAValidateNights(
 		TMap<FName, int32> KeySpots;
 		TMap<FName, int32> LockedCount;
 		int32 Masters = 0, Cameras = 0;
+		// the shift's layer, seed-independent first: every treasure spot, every resident and every Clerk post is reachable
+		TArray<FString> UnreachableShift;
+		for (const AActor* Spot : Site.TreasureSpots)
+		{
+			if (PathLength(World, Spot->GetActorLocation(), Points.Start) < 0.0f) { UnreachableShift.Add(Spot->GetName()); }
+		}
+		for (const AFacilityResident* Resident : Site.Residents)
+		{
+			if (PathLength(World, Resident->GetActorLocation(), Points.Start) < 0.0f) { UnreachableShift.Add(Resident->GetName()); }
+		}
+		for (TActorIterator<ATargetPoint> It(World); It; ++It)
+		{
+			if (It->Tags.Contains(FName(TEXT("ClerkPost"))) && PathLength(World, It->GetActorLocation(), Points.Start) < 0.0f) { UnreachableShift.Add(It->GetName()); }
+		}
+		for (TActorIterator<AFacilityClerk> It(World); It; ++It)
+		{
+			if (PathLength(World, It->GetActorLocation(), Points.Start) < 0.0f) { UnreachableShift.Add(It->GetName()); }
+		}
+		for (TActorIterator<AFacilityGuest> It(World); It; ++It)
+		{
+			if (PathLength(World, It->GetActorLocation(), Points.Start) < 0.0f) { UnreachableShift.Add(It->GetName()); }
+		}
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_CHECK %s ShiftReach expected nothing unreachable got [%s] (%d treasure spots, %d residents, %d creatures here)"),
+			UnreachableShift.IsEmpty() ? TEXT("PASS") : TEXT("FAIL"), *FString::Join(UnreachableShift, TEXT(", ")), Site.TreasureSpots.Num(), Site.Residents.Num(), Site.CreaturesHere.Num());
+
+		int32 ShiftGood = 0;
+		TMap<FString, int32> AwakeCount;
 		for (int32 Seed = First; Seed < First + Count; ++Seed)
 		{
 			const FacilityNight::FPlan Plan = FacilityNight::Plan(Seed, Site);
@@ -361,6 +394,43 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAValidateNights(
 			}
 			// the plan has to be the same every time it is made from the seed
 			bOk &= FacilityNight::Plan(Seed, Site).Describe(Site) == Plan.Describe(Site);
+
+			// each night of the shift that starts with this seed: 3 or 4 Offerings, the right number of creatures awake,
+			// every one of them bound to something, 3 or 4 residents, and still completable
+			bool bShiftOk = true;
+			FString Why;
+			for (int32 Night = 1; Night <= FacilityShift::NightsPerShift; ++Night)
+			{
+				const FacilityNight::FPlan Nightly = FacilityNight::Plan(FacilityShift::NightSeed(Seed, Night), Site, Night);
+				const int32 NumOfferings = Nightly.GetOfferings().Num();
+				const int32 Expected = FMath::Min(FacilityShift::CreaturesForNight(Night), Site.CreaturesHere.Num());
+				const bool bCreaturesOk = Night == 2 ? Nightly.Creatures.Num() >= FMath::Min(2, Site.CreaturesHere.Num()) && Nightly.Creatures.Num() <= Expected : Nightly.Creatures.Num() == Expected;
+				bool bAllBound = true;
+				for (const EFacilityCreature Creature : Nightly.Creatures)
+				{
+					TArray<EFacilityCreature> Bound;
+					Nightly.Bindings.GenerateValueArray(Bound);
+					bAllBound &= Bound.Contains(Creature) || NumOfferings < Nightly.Creatures.Num();
+					AwakeCount.FindOrAdd(FacilityShift::CreatureName(Creature))++;
+				}
+				const bool bResidentsOk = Site.ResidentGroups.Num() < 3 || (Nightly.ResidentsShown.Num() >= 3 && Nightly.ResidentsShown.Num() <= 4);
+				const bool bNightOk = Nightly.Problem.IsEmpty() && NumOfferings >= 3 && NumOfferings <= 4 && bCreaturesOk && bAllBound && bResidentsOk
+					&& Nightly.Bindings.Num() == NumOfferings;
+				if (!bNightOk && Why.IsEmpty())
+				{
+					Why = FString::Printf(TEXT("night %d: %d offerings, %d awake, bound %d, residents %d, %s"), Night, NumOfferings, Nightly.Creatures.Num(),
+						bAllBound ? 1 : 0, Nightly.ResidentsShown.Num(), *Nightly.Problem);
+				}
+				bShiftOk &= bNightOk;
+			}
+			if (bShiftOk)
+			{
+				++ShiftGood;
+			}
+			else
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_NIGHT bad shift %d: %s"), Seed, *Why);
+			}
 			if (bOk)
 			{
 				++Good;
@@ -390,6 +460,14 @@ static FAutoConsoleCommandWithWorldAndArgs CmdQAValidateNights(
 		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_NIGHT variety over %d seeds: gate key [%s], locked [%s], master key %d, flash camera %d"),
 			Count, *FString::Join(Spots, TEXT(", ")), *FString::Join(Rooms, TEXT(", ")), Masters, Cameras);
 		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_CHECK %s ValidateNights expected %d got %d completable"), Good == Count ? TEXT("PASS") : TEXT("FAIL"), Count, Good);
+		TArray<FString> Awake;
+		for (const TPair<FString, int32>& Entry : AwakeCount)
+		{
+			Awake.Add(FString::Printf(TEXT("%s %d"), *Entry.Key, Entry.Value));
+		}
+		Awake.Sort();
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_NIGHT shift variety over %d shifts x %d nights: awake [%s]"), Count, FacilityShift::NightsPerShift, *FString::Join(Awake, TEXT(", ")));
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_CHECK %s ValidateShifts expected %d got %d with every night right"), ShiftGood == Count ? TEXT("PASS") : TEXT("FAIL"), Count, ShiftGood);
 	}));
 
 static FAutoConsoleCommandWithWorldAndArgs CmdQANightRoute(
@@ -580,6 +658,95 @@ static FAutoConsoleCommandWithWorld CmdQANoiseInLockedRoom(
 		UE_LOG(LogTheFacility, Warning, TEXT("facility.QA.NoiseInLockedRoom: no locked room with a container"));
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs CmdQAWake(
+	TEXT("facility.QA.Wake"),
+	TEXT("QA, host: wakes a creature now, as if its Offering were signed. facility.QA.Wake Clerk|Guest|Tenant"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (!IsHost(World, TEXT("facility.QA.Wake")) || Args.IsEmpty())
+		{
+			return;
+		}
+		if (Args[0] == TEXT("Clerk")) { for (TActorIterator<AFacilityClerk> It(World); It; ++It) { It->Wake(TEXT("QA")); } }
+		else if (Args[0] == TEXT("Guest")) { for (TActorIterator<AFacilityGuest> It(World); It; ++It) { It->Wake(TEXT("QA")); } }
+		else if (Args[0] == TEXT("Tenant")) { for (TActorIterator<AFacilityTenant> It(World); It; ++It) { It->WakeNow(TEXT("QA")); } }
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQAResident(
+	TEXT("facility.QA.Resident"),
+	TEXT("QA, host: triggers tonight's residents for a player, through their own reaction, and logs each. facility.QA.Resident [Player]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.Resident")) ? GetPlayer(World, Args.IsValidIndex(0) ? FCString::Atoi(*Args[0]) : 0) : nullptr;
+		for (TActorIterator<AFacilityResident> It(World); It && Player; ++It)
+		{
+			if (It->IsShown())
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN resident %s kind %s reaction %s"), *It->GetName(),
+					*StaticEnum<EFacilityResidentKind>()->GetNameStringByValue((int64)It->GetKind()), *StaticEnum<EFacilityResidentReaction>()->GetNameStringByValue((int64)It->GetReaction()));
+				It->Trigger(Player);
+			}
+		}
+	}));
+
+static FAutoConsoleCommand CmdQAPassive(
+	TEXT("facility.QA.Passive"),
+	TEXT("QA: creatures take nobody (1) or behave as ever (0). They still wake, move, lock doors and freeze. facility.QA.Passive <1|0>"),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		FacilityShift::SetCreaturesPassive(Args.IsValidIndex(0) && Args[0] == TEXT("1"));
+		UE_LOG(LogTheFacility, Display, TEXT("facility.QA.Passive: creatures %s"), FacilityShift::AreCreaturesPassive() ? TEXT("take nobody") : TEXT("take as ever"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQATakeTreasure(
+	TEXT("facility.QA.TakeTreasure"),
+	TEXT("QA, host: a player takes tonight's first treasure lying out (signs for it). facility.QA.TakeTreasure [Player]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.TakeTreasure")) ? GetPlayer(World, Args.IsValidIndex(0) ? FCString::Atoi(*Args[0]) : 0) : nullptr;
+		for (TActorIterator<AFacilityPickup> It(World); It && Player; ++It)
+		{
+			if (FacilityShift::IsTreasure(It->GetGrantedKeyId()) && IFacilityInteractable::Execute_CanInteract(*It, Player))
+			{
+				UE_LOG(LogTheFacility, Display, TEXT("facility.QA.TakeTreasure: %s takes the %s"), *Player->GetName(), *It->GetGrantedKeyId().ToString());
+				IFacilityInteractable::Execute_Interact(*It, Player);
+				return;
+			}
+		}
+		UE_LOG(LogTheFacility, Warning, TEXT("facility.QA.TakeTreasure: nothing to take"));
+	}));
+
+static FAutoConsoleCommandWithWorldAndArgs CmdQAGotoItem(
+	TEXT("facility.QA.GotoItem"),
+	TEXT("QA, host: stands a player a step from the pickup granting an item, facing it, for that player to take it themself. facility.QA.GotoItem <Id> [Player]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		AFacilityCharacter* Player = IsHost(World, TEXT("facility.QA.GotoItem")) && !Args.IsEmpty() ? GetPlayer(World, Args.IsValidIndex(1) ? FCString::Atoi(*Args[1]) : 0) : nullptr;
+		for (TActorIterator<AFacilityPickup> It(World); It && Player; ++It)
+		{
+			if (It->GetGrantedKeyId() == FName(*Args[0]))
+			{
+				const FVector Item = It->GetActorLocation();
+				const FVector Stand = Item + FVector(-90.0f, 0.0f, 0.0f);
+				Player->TeleportTo(FVector(Stand.X, Stand.Y, 100.0f), FRotator(0.0f, 0.0f, 0.0f));
+				UE_LOG(LogTheFacility, Display, TEXT("facility.QA.GotoItem: %s stands by the %s"), *Player->GetName(), *Args[0]);
+				return;
+			}
+		}
+		UE_LOG(LogTheFacility, Warning, TEXT("facility.QA.GotoItem: no player or no %s lying out"), Args.IsEmpty() ? TEXT("item") : *Args[0]);
+	}));
+
+static FAutoConsoleCommandWithWorld CmdQANextNight(
+	TEXT("facility.QA.NextNight"),
+	TEXT("QA, host: after an escape, goes on to the next night of the shift now instead of waiting"),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	{
+		if (AFacilityGameMode* GameMode = IsHost(World, TEXT("facility.QA.NextNight")) ? World->GetAuthGameMode<AFacilityGameMode>() : nullptr)
+		{
+			GameMode->AdvanceNight();
+		}
+	}));
+
 static FAutoConsoleCommandWithWorld CmdQAClientState(
 	TEXT("facility.QA.NightSeen"),
 	TEXT("QA, any machine: what this machine sees of the night's clues and throws: containers giving off a clue, crashes heard, what the local player carries to throw"),
@@ -594,9 +761,21 @@ static FAutoConsoleCommandWithWorld CmdQAClientState(
 		}
 		const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
 		const AFacilityCharacter* Character = PC ? Cast<AFacilityCharacter>(PC->GetPawn()) : nullptr;
-		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s containers=%d searched=%d clues=%d crashes_heard=%d carrying_throwable=%s"),
+		const AFacilityGameState* State = World ? World->GetGameState<AFacilityGameState>() : nullptr;
+		TActorIterator<AFacilityClerk> Clerk(World);
+		TActorIterator<AFacilityGuest> Guest(World);
+		int32 Residents = 0;
+		for (TActorIterator<AFacilityResident> It(World); It; ++It)
+		{
+			Residents += It->IsShown() ? 1 : 0;
+		}
+		UE_LOG(LogTheFacility, Display, TEXT("FACILITY_QA_SEEN %s containers=%d searched=%d clues=%d crashes_heard=%d carrying_throwable=%s night=%d records=%d score=%d clerk=%s guest=%s%s residents=%d run=%s"),
 			World && World->GetNetMode() == NM_Client ? TEXT("client") : TEXT("host"), Containers, Searched, Clues, AFacilityThrown::GetBreaksSeen(),
-			Character ? *Character->GetHeldThrowable().ToString() : TEXT("-"));
+			Character ? *Character->GetHeldThrowable().ToString() : TEXT("-"), State ? State->GetNight() : 0, State ? State->GetShiftRecords().Num() : 0,
+			State && !State->GetShiftRecords().IsEmpty() ? State->GetShiftRecords().Last().Score : 0,
+			Clerk ? *StaticEnum<EClerkState>()->GetNameStringByValue((int64)Clerk->GetClerkState()) : TEXT("-"),
+			Guest ? *StaticEnum<EGuestState>()->GetNameStringByValue((int64)Guest->GetGuestState()) : TEXT("-"), Guest && Guest->IsFrozen() ? TEXT(" (frozen)") : TEXT(""),
+			Residents, State ? *StaticEnum<EFacilityRunState>()->GetNameStringByValue((int64)State->GetRunState()) : TEXT("-"));
 	}));
 
 static FAutoConsoleCommandWithWorldAndArgs CmdQAThrowAt(

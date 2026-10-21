@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityShift.h"
 #include "Facility/FacilityLook.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityGameState.h"
@@ -173,7 +174,8 @@ void AFacilityMarked::HandleSignatureRecorded(const FFacilitySignature& Signatur
 		UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s signed %s, it will return faster (withdraw %.1f s)"), *Signature.SignerName, *Signature.SignatureId.ToString(), WithdrawTime * WithdrawScale);
 	}
 
-	if (Signature.SignatureId != ArmedBySignatureId || !IsValid(Signature.Signer))
+	const bool bArms = bNightBound ? NightSignatureIds.Contains(Signature.SignatureId) : Signature.SignatureId == ArmedBySignatureId;
+	if (!bArms || !IsValid(Signature.Signer))
 	{
 		return;
 	}
@@ -230,7 +232,7 @@ void AFacilityMarked::Appear()
 
 void AFacilityMarked::CatchMark()
 {
-	if (!HasAuthority())
+	if (!HasAuthority() || FacilityShift::AreCreaturesPassive())
 	{
 		return;
 	}
@@ -304,6 +306,18 @@ void AFacilityMarked::Hasten(const FString& Why)
 
 	WithdrawScale *= 0.5f;
 	UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s, it will return faster (withdraw %.1f s)"), *Why, WithdrawTime * WithdrawScale);
+}
+
+void AFacilityMarked::SetNightBinding(const TArray<FName>& SignatureIds, bool bAwakeTonight)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	bNightBound = true;
+	NightSignatureIds = bAwakeTonight ? SignatureIds : TArray<FName>();
+	UE_LOG(LogTheFacility, Log, TEXT("The Marked: %s tonight, armed by [%s]"), bAwakeTonight ? TEXT("awake") : TEXT("asleep"),
+		*FString::JoinBy(NightSignatureIds, TEXT(", "), [](FName Id) { return Id.ToString(); }));
 }
 
 void AFacilityMarked::MoveHome(const FTransform& Home)

@@ -165,6 +165,11 @@ public:
 	/** Server only, at the start of a night: the room it never checked out of, this time */
 	void MoveHome(const FTransform& Home);
 
+	/** Server only, at the start of a night: the Offerings that wake it tonight. Not awake tonight, nothing wakes it, not even the power */
+	void SetNightBinding(const TArray<FName>& SignatureIds, bool bAwakeTonight);
+
+	const TArray<FName>& GetArmedBy() const { return ArmedBySignatureIds; }
+
 	/** Server only. Called by the AI */
 	void SetTenantState(ETenantState NewState);
 

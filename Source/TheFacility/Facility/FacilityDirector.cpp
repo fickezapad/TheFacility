@@ -103,7 +103,7 @@ void AFacilityDirector::HearNoise(float Radius)
 
 	const float Amount = FMath::Min(Radius / 1000.0f * NoiseAttentionPer1000cm, NoiseBudget);
 	NoiseBudget -= Amount;
-	Attention += Amount;
+	Attention += Amount * Harshness;
 }
 
 void AFacilityDirector::HearVoice(float Radius)
@@ -115,7 +115,7 @@ void AFacilityDirector::HearVoice(float Radius)
 
 	const float Amount = FMath::Min(Radius / 1000.0f * VoiceAttentionPer1000cm, VoiceBudget);
 	VoiceBudget -= Amount;
-	Attention += Amount;
+	Attention += Amount * Harshness;
 }
 
 void AFacilityDirector::AddAttention(float Amount, const FString& Why)
@@ -125,7 +125,7 @@ void AFacilityDirector::AddAttention(float Amount, const FString& Why)
 		return;
 	}
 
-	Attention += Amount;
+	Attention += Amount * Harshness;
 	UE_LOG(LogTheFacility, Log, TEXT("The Facility: +%.0f attention (%s), now %.0f"), Amount, *Why, Attention);
 	// checked at once, so an answer follows the signature that caused it
 	CheckThresholds();
@@ -145,7 +145,7 @@ void AFacilityDirector::Think()
 		return;
 	}
 
-	Attention += AttentionPerMinute / 60.0f * ThinkInterval;
+	Attention += AttentionPerMinute * Harshness / 60.0f * ThinkInterval;
 	NoiseBudget = FMath::Min(NoiseBudget + NoiseAttentionPerSecondCap * ThinkInterval, NoiseAttentionPerSecondCap);
 	VoiceBudget = FMath::Min(VoiceBudget + VoiceAttentionPerSecondCap * ThinkInterval, VoiceAttentionPerSecondCap);
 	if (Tier >= Thresholds.Num() && Thresholds.Num() > 0)
@@ -424,6 +424,13 @@ void AFacilityDirector::RestoreLights(bool bAll)
 			Darkened.RemoveAtSwap(Index);
 		}
 	}
+}
+
+void AFacilityDirector::SetHarshness(float Multiplier)
+{
+	Harshness = FMath::Max(Multiplier, 0.1f);
+	RecurringAnswerInterval /= Harshness;
+	UE_LOG(LogTheFacility, Log, TEXT("The Facility: harshness x%.2f (answers every %.0f s)"), Harshness, RecurringAnswerInterval);
 }
 
 void AFacilityDirector::ShutDown()

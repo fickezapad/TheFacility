@@ -56,6 +56,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Marked")
 	FName ArmedBySignatureId = TEXT("MusicBox");
 
+	/** Set by the night: what arms it tonight, instead of ArmedBySignatureId */
+	TArray<FName> NightSignatureIds;
+	bool bNightBound = false;
+
 	/** Time between the signature and the creature appearing */
 	UPROPERTY(EditAnywhere, Category="Marked", meta=(ClampMin=0, Units="s"))
 	float ManifestDelay = 4.0f;
@@ -154,6 +158,11 @@ public:
 
 	/** Server only, at the start of a night: where it waits this time, appears and withdraws to */
 	void MoveHome(const FTransform& Home);
+
+	/** Server only, at the start of a night: the Offerings that arm it tonight (their signer becomes its mark). Not awake tonight, it never arms */
+	void SetNightBinding(const TArray<FName>& SignatureIds, bool bAwakeTonight);
+
+	const TArray<FName>& GetArmedBy() const { return NightSignatureIds; }
 
 	/** Server only. Halves how long it stays away after a catch, like a hastening signature */
 	void Hasten(const FString& Why);

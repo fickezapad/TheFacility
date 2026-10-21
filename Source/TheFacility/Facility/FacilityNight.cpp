@@ -5,6 +5,10 @@
 #include "Facility/FacilityContainer.h"
 #include "Facility/FacilityDoor.h"
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityClerk.h"
+#include "Facility/FacilityGuest.h"
+#include "Facility/FacilityPickup.h"
+#include "Facility/FacilityResident.h"
 #include "Facility/FacilityTenant.h"
 #include "Engine/TargetPoint.h"
 #include "Engine/World.h"
@@ -20,6 +24,7 @@ namespace
 {
 	const FName TenantStartTag(TEXT("TenantStart"));
 	const FName MarkedStartTag(TEXT("MarkedStart"));
+	const FName TreasureSpotTag(TEXT("TreasureSpot"));
 	const FName ManagerArea(TEXT("Manager"));
 	const FName LaundryArea(TEXT("Laundry"));
 	const FName MotelZone(TEXT("Motel"));
@@ -65,6 +70,24 @@ bool FacilityNight::FPlan::IsInLockedRoom(const FSite& Site, int32 ContainerInde
 	return Site.Containers.IsValidIndex(ContainerIndex) && LockedRooms.Contains(Site.Containers[ContainerIndex]->GetArea());
 }
 
+TArray<FName> FacilityNight::FPlan::GetOfferings() const
+{
+	TArray<FName> Ids;
+	for (const TPair<int32, FName>& Entry : Contents)
+	{
+		if (FacilityShift::IsOffering(Entry.Value))
+		{
+			Ids.AddUnique(Entry.Value);
+		}
+	}
+	for (const TPair<FName, int32>& Entry : TreasureAt)
+	{
+		Ids.AddUnique(Entry.Key);
+	}
+	Ids.Sort(FNameLexicalLess());
+	return Ids;
+}
+
 FString FacilityNight::FPlan::Describe(const FSite& Site) const
 {
 	TArray<FString> Items;
@@ -82,8 +105,25 @@ FString FacilityNight::FPlan::Describe(const FSite& Site) const
 	{
 		Locked.Add(Room.ToString());
 	}
-	return FString::Printf(TEXT("seed %d: locked [%s], Tenant in %s, Marked at start %d, gate key spot %s, items: %s%s"),
-		Seed, *FString::Join(Locked, TEXT(", ")), *TenantRoom.ToString(), MarkedStart, *GateKeySpot.ToString(), *FString::Join(Items, TEXT("; ")),
+	TArray<FString> Awake, Bound, Shown;
+	for (const EFacilityCreature Creature : Creatures)
+	{
+		Awake.Add(FacilityShift::CreatureName(Creature));
+	}
+	for (const FName Offering : GetOfferings())
+	{
+		const int32* Spot = TreasureAt.Find(Offering);
+		Bound.Add(FString::Printf(TEXT("%s%s -> %s"), *Offering.ToString(),
+			Spot && Site.TreasureSpots.IsValidIndex(*Spot) ? *FString::Printf(TEXT(" at %s"), *Site.TreasureSpots[*Spot]->GetName()) : TEXT(""),
+			*FacilityShift::CreatureName(BoundTo(Offering))));
+	}
+	for (const FName Group : ResidentsShown)
+	{
+		Shown.Add(Group.ToString());
+	}
+	return FString::Printf(TEXT("seed %d night %d: locked [%s], Tenant in %s, Marked at start %d, gate key spot %s, items: %s; awake [%s]; offerings [%s]; residents [%s]%s"),
+		Seed, Night, *FString::Join(Locked, TEXT(", ")), *TenantRoom.ToString(), MarkedStart, *GateKeySpot.ToString(), *FString::Join(Items, TEXT("; ")),
+		*FString::Join(Awake, TEXT(", ")), *FString::Join(Bound, TEXT("; ")), *FString::Join(Shown, TEXT(", ")),
 		Problem.IsEmpty() ? TEXT("") : *(TEXT(". PROBLEM: ") + Problem));
 }
 
@@ -118,21 +158,40 @@ FacilityNight::FSite FacilityNight::GatherSite(UWorld* World)
 		{
 			Site.MarkedStarts.Add(*It);
 		}
+		else if (It->Tags.Contains(TreasureSpotTag))
+		{
+			Site.TreasureSpots.Add(*It);
+		}
 	}
+	TSet<FName> ResidentGroups;
+	for (TActorIterator<AFacilityResident> It(World); It; ++It)
+	{
+		Site.Residents.Add(*It);
+		ResidentGroups.Add(It->GetGroup());
+	}
+	Site.ResidentGroups = ResidentGroups.Array();
+	if (TActorIterator<AFacilityTenant>(World)) { Site.CreaturesHere.Add(EFacilityCreature::Tenant); }
+	if (TActorIterator<AFacilityMarked>(World)) { Site.CreaturesHere.Add(EFacilityCreature::Marked); }
+	if (TActorIterator<AFacilityClerk>(World)) { Site.CreaturesHere.Add(EFacilityCreature::Clerk); }
+	if (TActorIterator<AFacilityGuest>(World)) { Site.CreaturesHere.Add(EFacilityCreature::Guest); }
 
 	// names are the same on every machine and in every session; iteration order is not
 	const auto ByName = [](const AActor& A, const AActor& B) { return A.GetName() < B.GetName(); };
 	Site.Containers.Sort(ByName);
 	Site.TenantStarts.Sort(ByName);
 	Site.MarkedStarts.Sort(ByName);
+	Site.TreasureSpots.Sort(ByName);
+	Site.Residents.Sort(ByName);
+	Site.ResidentGroups.Sort(FNameLexicalLess());
 	Site.LockGroups.Sort(FNameLexicalLess());
 	return Site;
 }
 
-FacilityNight::FPlan FacilityNight::Plan(int32 Seed, const FSite& Site)
+FacilityNight::FPlan FacilityNight::Plan(int32 Seed, const FSite& Site, int32 Night)
 {
 	FPlan Plan;
 	Plan.Seed = Seed;
+	Plan.Night = FMath::Clamp(Night, 1, FacilityShift::NightsPerShift);
 	if (!Site.IsNight())
 	{
 		return Plan;
@@ -258,6 +317,75 @@ FacilityNight::FPlan FacilityNight::Plan(int32 Seed, const FSite& Site)
 		}
 	}
 
+	// ---- the shift's layer, drawn after everything above so a seed's items stay where they were ----
+
+	// which creatures are awake to Offerings tonight: two on the first night, then three (sometimes two on the second)
+	{
+		TArray<EFacilityCreature> Pool = Site.CreaturesHere;
+		Shuffle(Pool, Stream);
+		int32 Count = FacilityShift::CreaturesForNight(Plan.Night);
+		if (Plan.Night == 2 && Stream.FRand() < 0.4f)
+		{
+			Count = 2;
+		}
+		for (int32 Index = 0; Index < FMath::Min(Count, Pool.Num()); ++Index)
+		{
+			Plan.Creatures.Add(Pool[Index]);
+		}
+		Plan.Creatures.Sort([](EFacilityCreature A, EFacilityCreature B) { return (uint8)A < (uint8)B; });
+	}
+
+	// the treasures lying out: enough for three or four Offerings with the tools already hidden, in different places
+	{
+		const int32 Tools = (Plan.FindItem(MasterKeyId) != INDEX_NONE ? 1 : 0) + (Plan.FindItem(FlashCameraId) != INDEX_NONE ? 1 : 0);
+		const int32 Wanted = FMath::Clamp(Stream.RandRange(3, 4) - Tools, 1, FacilityShift::Treasures().Num());
+		TArray<FName> Kinds = FacilityShift::Treasures();
+		Shuffle(Kinds, Stream);
+		TArray<int32> SpotOrder;
+		for (int32 Index = 0; Index < Site.TreasureSpots.Num(); ++Index)
+		{
+			SpotOrder.Add(Index);
+		}
+		Shuffle(SpotOrder, Stream);
+		TSet<FName> UsedAreas;
+		for (int32 Index = 0; Index < SpotOrder.Num() && Plan.TreasureAt.Num() < FMath::Min(Wanted, Kinds.Num()); ++Index)
+		{
+			const TArray<FName>& Tags = Site.TreasureSpots[SpotOrder[Index]]->Tags;
+			const FName Area = Tags.Num() > 1 ? Tags[1] : NAME_None;
+			if (!UsedAreas.Contains(Area))
+			{
+				UsedAreas.Add(Area);
+				Plan.TreasureAt.Add(Kinds[Plan.TreasureAt.Num()], SpotOrder[Index]);
+			}
+		}
+	}
+
+	// each Offering wakes one of tonight's creatures; every creature gets at least one while there are enough
+	{
+		TArray<FName> Offerings = Plan.GetOfferings();
+		Shuffle(Offerings, Stream);
+		TArray<EFacilityCreature> Order = Plan.Creatures;
+		Shuffle(Order, Stream);
+		for (int32 Index = 0; Index < Offerings.Num() && !Order.IsEmpty(); ++Index)
+		{
+			const EFacilityCreature Creature = Index < Order.Num() ? Order[Index] : Order[Stream.RandRange(0, Order.Num() - 1)];
+			Plan.Bindings.Add(Offerings[Index], Creature);
+			Plan.HintVariant.Add(Offerings[Index], Stream.RandRange(0, 2));
+		}
+	}
+
+	// three or four residents, each from a different group
+	{
+		TArray<FName> Groups = Site.ResidentGroups;
+		Shuffle(Groups, Stream);
+		const int32 Shown = FMath::Min(Stream.RandRange(3, 4), Groups.Num());
+		for (int32 Index = 0; Index < Shown; ++Index)
+		{
+			Plan.ResidentsShown.Add(Groups[Index]);
+		}
+		Plan.ResidentsShown.Sort(FNameLexicalLess());
+	}
+
 	// completable? The fuses and the gate key are all there, and whatever is locked away has an unlocked master key
 	int32 NumFuses = 0;
 	for (const TPair<int32, FName>& Entry : Plan.Contents)
@@ -321,9 +449,58 @@ void FacilityNight::Apply(UWorld* World, const FPlan& Plan, const FSite& Site)
 
 	for (const TPair<int32, FName>& Entry : Plan.Contents)
 	{
-		// the fuse, the master key and the flash camera are Offerings: taking one signs the register. The gate key isn't
-		const FName Signature = Entry.Value == GateKeyId ? NAME_None : Entry.Value;
+		// the master key and the flash camera are Offerings: taking one signs the register and wakes what it is bound
+		// to. The fuses and the gate key are the work of the night: they sign nothing
+		const FName Signature = FacilityShift::IsOffering(Entry.Value) ? Entry.Value : NAME_None;
 		Site.Containers[Entry.Key]->SetContent(Entry.Value, AFacilityCharacter::GetItemName(Entry.Value), Signature, MotelZone);
+	}
+
+	// the treasures, lying out where they can be seen: taking one signs the register like any Offering
+	for (const TPair<FName, int32>& Entry : Plan.TreasureAt)
+	{
+		const AActor* Spot = Site.TreasureSpots[Entry.Value];
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		if (AFacilityPickup* Treasure = World->SpawnActor<AFacilityPickup>(AFacilityPickup::StaticClass(), Spot->GetActorLocation(), Spot->GetActorRotation(), SpawnParams))
+		{
+			Treasure->InitDropped(Entry.Key, FacilityShift::NameOf(Entry.Key), Entry.Key, MotelZone);
+		}
+	}
+
+	// what each creature answers to tonight; a creature not awake tonight never comes
+	const auto BoundTo = [&Plan](EFacilityCreature Creature)
+	{
+		TArray<FName> Ids;
+		for (const TPair<FName, EFacilityCreature>& Binding : Plan.Bindings)
+		{
+			if (Binding.Value == Creature)
+			{
+				Ids.Add(Binding.Key);
+			}
+		}
+		return Ids;
+	};
+	for (TActorIterator<AFacilityTenant> It(World); It; ++It)
+	{
+		It->SetNightBinding(BoundTo(EFacilityCreature::Tenant), Plan.Creatures.Contains(EFacilityCreature::Tenant));
+	}
+	for (TActorIterator<AFacilityMarked> It(World); It; ++It)
+	{
+		It->SetNightBinding(BoundTo(EFacilityCreature::Marked), Plan.Creatures.Contains(EFacilityCreature::Marked));
+	}
+	for (TActorIterator<AFacilityClerk> It(World); It; ++It)
+	{
+		It->SetNightBinding(BoundTo(EFacilityCreature::Clerk), Plan.Creatures.Contains(EFacilityCreature::Clerk));
+	}
+	for (TActorIterator<AFacilityGuest> It(World); It; ++It)
+	{
+		It->SetNightBinding(BoundTo(EFacilityCreature::Guest), Plan.Creatures.Contains(EFacilityCreature::Guest));
+	}
+
+	// tonight's residents, each with its own way of reacting, decided by the seed
+	for (int32 Index = 0; Index < Site.Residents.Num(); ++Index)
+	{
+		Site.Residents[Index]->SetShownTonight(Plan.ResidentsShown.Contains(Site.Residents[Index]->GetGroup()), HashCombine(GetTypeHash(Plan.Seed), GetTypeHash(Index)));
 	}
 
 	UE_LOG(LogTheFacility, Log, TEXT("Night plan, %s"), *Plan.Describe(Site));

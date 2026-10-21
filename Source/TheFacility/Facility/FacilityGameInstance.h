@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
 #include "Engine/EngineBaseTypes.h"
+#include "Facility/FacilityShift.h"
 #include "FacilityGameInstance.generated.h"
 
 class APlayerController;
@@ -118,6 +119,16 @@ public:
 	/** True on the machine hosting the current run */
 	bool IsHosting() const;
 
+	/** The shift, kept across the map reloads between its nights (server). BeginShift starts a new one at night 1 */
+	void BeginShift(int32 Seed) { ShiftSeed = Seed; ShiftNight = 1; ShiftRecords.Reset(); bContinueShift = false; }
+	/** The next night of this shift is about to load */
+	void ContinueShift() { bContinueShift = true; ++ShiftNight; }
+	/** True once, on the load that continues a shift */
+	bool ConsumeContinueShift() { const bool bWas = bContinueShift; bContinueShift = false; return bWas; }
+	int32 GetShiftSeed() const { return ShiftSeed; }
+	int32 GetShiftNight() const { return ShiftNight; }
+	TArray<FFacilityNightRecord>& GetShiftRecords() { return ShiftRecords; }
+
 	/** The seed the next night starts with, handed over across the map reload. 0 = none */
 	void SetNextRunSeed(int32 Seed) { NextRunSeed = Seed; }
 	int32 ConsumeNextRunSeed() { const int32 Seed = NextRunSeed; NextRunSeed = 0; return Seed; }
@@ -191,6 +202,11 @@ protected:
 	uint32 SeenHints = 0;
 
 	int32 NextRunSeed = 0;
+
+	int32 ShiftSeed = 0;
+	int32 ShiftNight = 1;
+	bool bContinueShift = false;
+	TArray<FFacilityNightRecord> ShiftRecords;
 
 	/** Whether a capture device could be opened at all */
 	bool bMicrophoneFound = false;

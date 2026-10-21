@@ -17,7 +17,21 @@ class THEFACILITY_API AFacilityHUD : public AHUD
 {
 	GENERATED_BODY()
 
+public:
+
+	/** A line someone (a resident) says, shown on this machine for a while */
+	void ShowLine(const FString& Text, float Seconds);
+
 protected:
+
+	struct FShownLine { FString Text; float Until = 0.0f; };
+	TArray<FShownLine> ShownLines;
+	void DrawLines();
+
+	/** Tonight's page of the register, while it is aimed at */
+	void DrawRegister(const class AFacilityGameState* GameState);
+	int32 RegisterKey = 0;
+	TArray<FString> RegisterPage;
 
 	/** How long the Facility's whisper stays on screen */
 	static constexpr float WhisperShowTime = 6.0f;

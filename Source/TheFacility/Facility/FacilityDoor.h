@@ -73,6 +73,9 @@ protected:
 	UPROPERTY(ReplicatedUsing=OnRep_Slammed, BlueprintReadOnly, Category="Door")
 	bool bHeldShut = false;
 
+	/** Locked by the Night Clerk passing, not by the night */
+	bool bClerkLocked = false;
+
 	/** The latch and a low wooden groan as it swings open */
 	UPROPERTY(EditAnywhere, Category="Door|Sound")
 	TObjectPtr<class USoundBase> CreakSound;
@@ -120,6 +123,12 @@ public:
 
 	/** Server only, at the start of a night: locks the door so only the master key (or the Tenant) gets it open */
 	void LockForNight();
+
+	/** Server only: the Night Clerk passing turns the lock of a closed door, and turns it back once it has gone.
+	 *  Never touches a door the night locked, one held by the Facility, a broken or an open one */
+	bool ClerkLock();
+	void ClerkUnlock();
+	bool IsClerkLocked() const { return bClerkLocked; }
 
 	/** True if this pawn may lock or unlock this door with the master key right now. Any machine */
 	bool CanToggleLock(const APawn* InstigatorPawn) const;

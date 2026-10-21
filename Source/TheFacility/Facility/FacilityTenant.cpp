@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Facility/FacilityTenant.h"
+#include "Facility/FacilityShift.h"
 #include "Facility/FacilityCharacter.h"
 #include "Facility/FacilityDirector.h"
 #include "Facility/FacilityHidingSpot.h"
@@ -165,6 +166,18 @@ void AFacilityTenant::MoveHome(const FTransform& Home)
 	SetActorTransform(HomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
 }
 
+void AFacilityTenant::SetNightBinding(const TArray<FName>& SignatureIds, bool bAwakeTonight)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	ArmedBySignatureIds = bAwakeTonight ? SignatureIds : TArray<FName>();
+	bWakeOnPowerRestored = bWakeOnPowerRestored && bAwakeTonight;
+	UE_LOG(LogTheFacility, Log, TEXT("The Tenant: %s tonight, woken by [%s]%s"), bAwakeTonight ? TEXT("awake") : TEXT("asleep"),
+		*FString::JoinBy(ArmedBySignatureIds, TEXT(", "), [](FName Id) { return Id.ToString(); }), bWakeOnPowerRestored ? TEXT(" or the power") : TEXT(""));
+}
+
 void AFacilityTenant::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(StateTimer);
@@ -308,7 +321,7 @@ void AFacilityTenant::Appear()
 
 void AFacilityTenant::CatchPlayer(AFacilityCharacter* Victim)
 {
-	if (!HasAuthority() || !Victim || !Victim->IsStanding() || !IsPresent())
+	if (!HasAuthority() || !Victim || !Victim->IsStanding() || !IsPresent() || FacilityShift::AreCreaturesPassive())
 	{
 		return;
 	}

@@ -8,6 +8,9 @@
 #include "Facility/FacilityHUD.h"
 #include "Facility/FacilityGameInstance.h"
 #include "Facility/FacilityMarked.h"
+#include "Facility/FacilityClerk.h"
+#include "Facility/FacilityGuest.h"
+#include "Facility/FacilityShift.h"
 #include "Facility/FacilityNight.h"
 #include "Facility/FacilityPickup.h"
 #include "Facility/FacilityTenant.h"
@@ -50,23 +53,37 @@ void AFacilityGameMode::InitGame(const FString& MapName, const FString& Options,
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
 
-	// a seed handed over by "another night" wins; then the URL; then facility.Seed; then chance
-	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	// the next night of a running shift keeps its seed; otherwise a new shift: a seed handed over by "another shift"
+	// wins, then the URL, then facility.Seed, then chance. Night 1 plays the shift's own seed
+	UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>();
+	if (GameInstance && GameInstance->ConsumeContinueShift())
 	{
-		RunSeed = GameInstance->ConsumeNextRunSeed();
+		ShiftSeed = GameInstance->GetShiftSeed();
+		Night = GameInstance->GetShiftNight();
 	}
-	if (RunSeed == 0)
+	else
 	{
-		RunSeed = UGameplayStatics::GetIntOption(Options, TEXT("Seed"), 0);
+		ShiftSeed = GameInstance ? GameInstance->ConsumeNextRunSeed() : 0;
+		if (ShiftSeed == 0)
+		{
+			ShiftSeed = UGameplayStatics::GetIntOption(Options, TEXT("Seed"), 0);
+		}
+		if (ShiftSeed == 0)
+		{
+			ShiftSeed = CVarFacilitySeed.GetValueOnGameThread();
+		}
+		if (ShiftSeed == 0)
+		{
+			ShiftSeed = FMath::RandRange(1, 999999);
+		}
+		Night = 1;
+		if (GameInstance)
+		{
+			GameInstance->BeginShift(ShiftSeed);
+		}
 	}
-	if (RunSeed == 0)
-	{
-		RunSeed = CVarFacilitySeed.GetValueOnGameThread();
-	}
-	if (RunSeed == 0)
-	{
-		RunSeed = FMath::RandRange(1, 999999);
-	}
+	RunSeed = FacilityShift::NightSeed(ShiftSeed, Night);
+	UE_LOG(LogTheFacility, Log, TEXT("Shift %d, night %d of %d: seed %d"), ShiftSeed, Night, FacilityShift::NightsPerShift, RunSeed);
 }
 
 void AFacilityGameMode::StartPlay()
@@ -76,6 +93,10 @@ void AFacilityGameMode::StartPlay()
 	if (AFacilityGameState* FacilityGameState = GetGameState<AFacilityGameState>())
 	{
 		FacilityGameState->StartRun(RunSeed);
+		if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+		{
+			FacilityGameState->SetShift(Night, ShiftSeed, GameInstance->GetShiftRecords());
+		}
 	}
 
 	ApplySeededPlacement();
@@ -85,6 +106,11 @@ void AFacilityGameMode::StartPlay()
 	if (TActorIterator<AFacilityExit>(GetWorld()) && !AFacilityDirector::Get(GetWorld()))
 	{
 		GetWorld()->SpawnActor<AFacilityDirector>();
+	}
+	// each night of the shift the Facility pays attention faster
+	if (AFacilityDirector* Director = AFacilityDirector::Get(GetWorld()))
+	{
+		Director->SetHarshness(FacilityShift::HarshnessForNight(Night));
 	}
 
 	GetWorldTimerManager().SetTimer(EvaluateTimer, this, &AFacilityGameMode::EvaluateRun, EvaluateInterval, true);
@@ -146,7 +172,9 @@ void AFacilityGameMode::ApplyNightPlan()
 	const FacilityNight::FSite Site = FacilityNight::GatherSite(GetWorld());
 	if (Site.IsNight())
 	{
-		FacilityNight::Apply(GetWorld(), FacilityNight::Plan(RunSeed, Site), Site);
+		const FacilityNight::FPlan Plan = FacilityNight::Plan(RunSeed, Site, Night);
+		NightCreatures = Plan.Creatures;
+		FacilityNight::Apply(GetWorld(), Plan, Site);
 	}
 }
 
@@ -244,6 +272,33 @@ void AFacilityGameMode::FinishRun(EFacilityRunState Outcome, const TArray<FStrin
 	}
 	FacilityGameState->EndRun(Outcome, Escaped, LeftBehind);
 
+	// the night goes into the shift's record; after an escape the next night follows, unless this was the last
+	UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>();
+	const FFacilityNightRecord Record = MakeRecord(Outcome, Escaped);
+	TArray<FFacilityNightRecord> Records = GameInstance ? GameInstance->GetShiftRecords() : FacilityGameState->GetShiftRecords();
+	Records.Add(Record);
+	if (GameInstance)
+	{
+		GameInstance->GetShiftRecords() = Records;
+	}
+	const bool bNext = Outcome == EFacilityRunState::Escaped && Night < FacilityShift::NightsPerShift;
+	const double NextAt = bNext ? FacilityGameState->GetServerWorldTimeSeconds() + NextNightDelay : 0.0;
+	FacilityGameState->SetNightOver(Records, NextAt, !bNext);
+	UE_LOG(LogTheFacility, Log, TEXT("Night %d over: %s, score %d. %s"), Night, Outcome == EFacilityRunState::Escaped ? TEXT("escaped") : TEXT("all taken"), Record.Score,
+		bNext ? *FString::Printf(TEXT("Night %d in %.0f s"), Night + 1, NextNightDelay) : TEXT("The shift is over"));
+	if (bNext)
+	{
+		GetWorldTimerManager().SetTimer(NextNightTimer, this, &AFacilityGameMode::AdvanceNight, NextNightDelay, false);
+	}
+	for (TActorIterator<AFacilityClerk> It(GetWorld()); It; ++It)
+	{
+		It->ShutDown();
+	}
+	for (TActorIterator<AFacilityGuest> It(GetWorld()); It; ++It)
+	{
+		It->ShutDown();
+	}
+
 	for (TActorIterator<AFacilityMarked> It(GetWorld()); It; ++It)
 	{
 		It->ShutDown();
@@ -269,13 +324,73 @@ void AFacilityGameMode::RestartRun(bool bSameNight)
 	GetWorldTimerManager().ClearTimer(EvaluateTimer);
 	UE_LOG(LogTheFacility, Log, TEXT("Run: restarting the night"));
 
-	// the seed rides across the reload in the game instance: this one again, or a fresh one
+	// the seed rides across the reload in the game instance: this shift again from its first night, or a fresh one
+	GetWorldTimerManager().ClearTimer(NextNightTimer);
 	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
 	{
-		GameInstance->SetNextRunSeed(bSameNight ? RunSeed : FMath::RandRange(1, 999999));
+		GameInstance->SetNextRunSeed(bSameNight ? ShiftSeed : FMath::RandRange(1, 999999));
 	}
 	UE_LOG(LogTheFacility, Log, TEXT("Run: %s"), bSameNight ? TEXT("the same night again") : TEXT("a new night"));
 
 	// reloads the current map for the host and every client
 	GetWorld()->ServerTravel(TEXT("?restart"));
+}
+
+void AFacilityGameMode::AdvanceNight()
+{
+	if (bRestarting)
+	{
+		return;
+	}
+	bRestarting = true;
+	GetWorldTimerManager().ClearTimer(EvaluateTimer);
+	if (UFacilityGameInstance* GameInstance = GetGameInstance<UFacilityGameInstance>())
+	{
+		GameInstance->ContinueShift();
+	}
+	UE_LOG(LogTheFacility, Log, TEXT("Run: night %d of the shift"), Night + 1);
+	GetWorld()->ServerTravel(TEXT("?restart"));
+}
+
+FFacilityNightRecord AFacilityGameMode::MakeRecord(EFacilityRunState Outcome, const TArray<FString>& Escaped) const
+{
+	FFacilityNightRecord Record;
+	Record.Night = Night;
+	Record.Seed = RunSeed;
+	Record.bEscaped = Outcome == EFacilityRunState::Escaped;
+	Record.Escaped = Escaped;
+	Record.Score = FacilityShift::EscapeScore * Escaped.Num();
+	for (const EFacilityCreature Creature : NightCreatures)
+	{
+		Record.Creatures.Add(FacilityShift::CreatureName(Creature));
+	}
+
+	const AFacilityGameState* FacilityGameState = GetGameState<AFacilityGameState>();
+	if (!FacilityGameState)
+	{
+		return Record;
+	}
+	Record.Seconds = FacilityGameState->GetRunTime();
+
+	// each Offering counts once, for whoever signed for it last: it pays if they got out
+	TArray<FName> Order;
+	TMap<FName, FString> LastSigner;
+	for (const FFacilitySignature& Entry : FacilityGameState->GetLedger())
+	{
+		if (FacilityShift::IsOffering(Entry.SignatureId))
+		{
+			Order.AddUnique(Entry.SignatureId);
+			LastSigner.Add(Entry.SignatureId, Entry.SignerName);
+		}
+	}
+	for (const FName Offering : Order)
+	{
+		const FString& Signer = LastSigner[Offering];
+		const bool bPaid = Escaped.Contains(Signer);
+		const int32 Value = bPaid ? FacilityShift::ValueOf(Offering) : 0;
+		Record.Score += Value;
+		Record.Offerings.Add(FString::Printf(TEXT("%s: %s, %s"), *FacilityShift::NameOf(Offering).ToString(), *Signer,
+			bPaid ? *FString::Printf(TEXT("+%d"), Value) : TEXT("kept by the motel")));
+	}
+	return Record;
 }

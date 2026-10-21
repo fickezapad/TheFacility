@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
+#include "Facility/FacilityShift.h"
 #include "FacilityGameState.generated.h"
 
 class APlayerState;
@@ -131,6 +132,19 @@ public:
 	/** Server only. Ends the run with an outcome, once */
 	void EndRun(EFacilityRunState Outcome, const TArray<FString>& Escaped, const TArray<FString>& LeftBehind);
 
+	/** The shift: three nights in a row. Which night this is, the shift's seed, and how the earlier nights went */
+	int32 GetNight() const { return Night; }
+	int32 GetShiftSeed() const { return ShiftSeed; }
+	const TArray<FFacilityNightRecord>& GetShiftRecords() const { return ShiftRecords; }
+
+	/** Server world time the next night of the shift begins, or 0 if it doesn't (the shift is over, or the night isn't) */
+	double GetNextNightTime() const { return NextNightTime; }
+	bool IsShiftOver() const { return bShiftOver; }
+
+	/** Server only */
+	void SetShift(int32 InNight, int32 InShiftSeed, const TArray<FFacilityNightRecord>& Records) { Night = InNight; ShiftSeed = InShiftSeed; ShiftRecords = Records; }
+	void SetNightOver(const TArray<FFacilityNightRecord>& Records, double InNextNightTime, bool bInShiftOver) { ShiftRecords = Records; NextNightTime = InNextNightTime; bShiftOver = bInShiftOver; }
+
 	/** Readable, unique player label, as used in the ledger */
 	FString MakeSignerName(const APlayerState* Signer) const;
 
@@ -176,6 +190,21 @@ protected:
 
 	UPROPERTY(Replicated)
 	int32 PeakTier = 0;
+
+	UPROPERTY(Replicated)
+	int32 Night = 1;
+
+	UPROPERTY(Replicated)
+	int32 ShiftSeed = 0;
+
+	UPROPERTY(Replicated)
+	TArray<FFacilityNightRecord> ShiftRecords;
+
+	UPROPERTY(Replicated)
+	double NextNightTime = 0.0;
+
+	UPROPERTY(Replicated)
+	bool bShiftOver = false;
 
 	/** True once OnPowerRestored has fired on this machine */
 	bool bPowerBroadcast = false;
